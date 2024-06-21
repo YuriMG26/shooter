@@ -22,10 +22,13 @@ move_player :: proc()
 screen_width: f32
 screen_height: f32
 
+game_camera: rl.Camera2D
+
 window_is_resized :: proc()
 {
   screen_width  = f32(rl.GetScreenWidth())
   screen_height = f32(rl.GetScreenHeight())
+  game_camera.offset = rl.Vector2{ screen_width / 2, screen_height / 2 }
 }
 
 Bullet :: struct
@@ -44,7 +47,6 @@ Enemy :: struct
 }
 
 bullets: [dynamic]Bullet
-
 enemies: [dynamic]Enemy
 
 spawn_enemy :: proc(x, y, health, speed: f32)
@@ -135,6 +137,8 @@ main :: proc()
 
   window_is_resized()
 
+  game_camera.zoom = 0.1
+
   player_size = { 80, 80 }
   player_pos = { screen_width / 2, screen_height / 2 }
 
@@ -145,39 +149,59 @@ main :: proc()
     spawn_enemy(x, y, 100, 100)
   }
 
+  background := rl.LoadTexture("assets/grass.png")
+
+  target_zoom := f32(1.0)
+
   for !rl.WindowShouldClose()
   {
     if rl.IsWindowResized() {
       window_is_resized()
     }
     delta_time = rl.GetFrameTime()
-    mouse_position = rl.GetMousePosition()
 
     player_rotation = math.atan2(player_pos.x - mouse_position.x, mouse_position.y - player_pos.y) 
     player_rotation = math.to_degrees(player_rotation)
 
-    if rl.IsMouseButtonPressed(.LEFT) {
-      direction: rl.Vector2 = { mouse_position.x - player_pos.x, mouse_position.y - player_pos.y }
-      direction = rl.Vector2Normalize(direction)
-      x := player_pos.x + direction.x
-      y := player_pos.y + direction.y
-      spawn_bullet(x, y, player_rotation, {direction.x, direction.y})
-    }
+    rl.BeginDrawing()
+    rl.ClearBackground(rl.SKYBLUE)
 
     simulate_bullets()
     simulate_enemies()
 
-    move_player()
+
+    game_camera.target = rl.Vector2{ player_pos.x, player_pos.y }
+
+    target_zoom += rl.GetMouseWheelMove() * 0.05;
+    game_camera.zoom = rl.Lerp(game_camera.zoom, target_zoom, 0.1)
+    mouse_position = rl.GetScreenToWorld2D(rl.GetMousePosition(), game_camera)
 
     check_collision()
 
-    rl.BeginDrawing()
-    rl.ClearBackground(rl.SKYBLUE)
+    mouse_direction: rl.Vector2 = { mouse_position.x - player_pos.x, mouse_position.y - player_pos.y }
+    mouse_direction = rl.Vector2Normalize(mouse_direction)
+
+
+    if rl.IsMouseButtonPressed(.LEFT) {
+      x := player_pos.x + mouse_direction.x
+      y := player_pos.y + mouse_direction.y
+      spawn_bullet(x, y, player_rotation, {mouse_direction.x, mouse_direction.y})
+    }
+
+    move_player()
+
+    rl.BeginMode2D(game_camera)
+
+    rl.DrawTextureEx(background, rl.Vector2{-1000, -1000}, 0, 4, rl.WHITE)
+    
+    rl.DrawLineV(rl.Vector2{ player_pos.x, player_pos.y }, mouse_position, rl.RED)
 
     rl.DrawRectanglePro(rl.Rectangle{ player_pos.x, player_pos.y, player_size.x, player_size.y }, rl.Vector2{ player_size.x / 2, player_size.y / 2 }, player_rotation, rl.WHITE)
 
     draw_bullets()
     draw_enemies()
+
+    rl.EndMode2D()
 
     current_y := i32(30)
     rl.DrawText(rl.TextFormat("Position: %.3f, %.3f", player_pos.x, player_pos.y), 10, current_y, 20, rl.BLACK)
