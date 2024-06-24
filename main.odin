@@ -227,15 +227,17 @@ main :: proc()
 
   background := rl.LoadTexture("assets/grass.png")
 
-  target_zoom := f32(1.0)
+  target_zoom := f32(0.6)
+  game_camera.target = player_pos
 
   game_is_running := true
 
   redbar_value := f32(-60)
 
-
-  scroll_bounds_a: [2]f32 = {screen_width * 0.25, screen_height * 0.1}
-  scroll_bounds_b: [2]f32 = {screen_width - (screen_width * 0.25), screen_height - (screen_height * 0.1)}
+  horizontal_padding := f32(0.4)
+  vertical_padding := f32(0.3)
+  scroll_bounds_a: [2]f32 = {screen_width * horizontal_padding, screen_height * vertical_padding}
+  scroll_bounds_b: [2]f32 = {screen_width - (screen_width * horizontal_padding), screen_height - (screen_height * vertical_padding)}
   scroll_bounds := rectangle_from_points(scroll_bounds_a, scroll_bounds_b)
 
   for game_is_running
@@ -305,32 +307,64 @@ main :: proc()
 
     rl.EndMode2D()
 
-    if !rl.CheckCollisionCircleRec(rl.Vector2{player_screen_position.x, player_screen_position.y}, player_default_size * 0.5 * game_camera.zoom, scroll_bounds) {
-      scroll_bounds_center := rl.Vector2{screen_width / 2, screen_height / 2}
+    // camera smooth scrolling stuff
+    horizontal_delta: f32
+    vertical_delta: f32
+    scroll_bounds_center := rl.Vector2{screen_width / 2, screen_height / 2}
+    horizontal_threshold := scroll_bounds.width / 2
+    vertical_threshold := scroll_bounds.height / 2
+    player_pos_screen := rl.GetWorldToScreen2D(player_pos, game_camera)
+    horizontal_delta = math.abs(player_pos_screen.x - scroll_bounds_center.x)
+    vertical_delta   = math.abs(player_pos_screen.y - scroll_bounds_center.y)
+    // horizontal_delta = player_pos_screen.x - scroll_bounds_center.x
+    // vertical_delta   = player_pos_screen.y - scroll_bounds_center.y
+    if !rl.CheckCollisionPointRec(rl.GetWorldToScreen2D(player_pos, game_camera), scroll_bounds) {
       distance_player_from_center := player_pos - scroll_bounds_center
 
-      horizontal_delta := rl.Vector2Length(distance_player_from_center)
-      if horizontal_delta > scroll_bounds.width / 2 {
-        game_camera.target.x += horizontal_delta - scroll_bounds.width / 2  
+      if horizontal_delta > horizontal_threshold {
+        if player_pos_screen.x < scroll_bounds_center.x {
+          game_camera.target.x -= horizontal_delta - horizontal_threshold
+        } else {
+          game_camera.target.x += horizontal_delta - horizontal_threshold  
+        }
       }
-
-      rl.DrawRectangle(auto_cast scroll_bounds_center.x, auto_cast scroll_bounds_center.y, 20, 20, rl.BLACK)
+      if vertical_delta > vertical_threshold {
+        if player_pos_screen.y < scroll_bounds_center.y {
+          game_camera.target.y -= vertical_delta - vertical_threshold
+        } else {
+          game_camera.target.y += vertical_delta - vertical_threshold  
+        }
+      }
     }
 
     current_y := i32(10)
     draw_shadowed_text(rl.TextFormat("FPS: %i", rl.GetFPS()), 10, current_y, 20, FLAT_GREEN)
     current_y += 22
-    draw_shadowed_text(rl.TextFormat("MousePosition: %.3f, %.3f", mouse_position.x, mouse_position.y), 10, current_y, 20, rl.WHITE)
+    draw_shadowed_text(rl.TextFormat("Camera zoom: %.3f", game_camera.zoom), 10, current_y, 20, rl.LIGHTGRAY)
     current_y += 22
-    draw_shadowed_text(rl.TextFormat("Rotation: %.3f", player_rotation), 10, current_y, 20, rl.WHITE)
+    draw_shadowed_text(rl.TextFormat("MousePosition: %.3f, %.3f", mouse_position.x, mouse_position.y), 10, current_y, 20, rl.LIGHTGRAY)
     current_y += 22
-    draw_shadowed_text(rl.TextFormat("Player health: %.3f", player_health), 10, current_y, 20, rl.WHITE)
+    draw_shadowed_text(rl.TextFormat("Rotation: %.3f", player_rotation), 10, current_y, 20, rl.LIGHTGRAY)
+    current_y += 22
+    draw_shadowed_text(rl.TextFormat("Player health: %.3f", player_health), 10, current_y, 20, rl.LIGHTGRAY)
     if is_dash_cooldown {
       current_y += 22
-      draw_shadowed_text(rl.TextFormat("Cooldown: %.3f", dash_cooldown), 10, current_y, 20, rl.WHITE)
+      draw_shadowed_text(rl.TextFormat("Cooldown: %.3f", dash_cooldown), 10, current_y, 20, rl.LIGHTGRAY)
     }
+    current_y += 22
+    draw_shadowed_text(rl.TextFormat("Vertical distance from center: %.2f", vertical_delta), 10, current_y, 20, rl.LIGHTGRAY)
+    current_y += 22
+    draw_shadowed_text(rl.TextFormat("Horizontal distance from center: %.2f", horizontal_delta), 10, current_y, 20, rl.LIGHTGRAY)
+    current_y += 22
+    draw_shadowed_text(rl.TextFormat("Vertical threshold: %.2f", vertical_threshold), 10, current_y, 20, rl.LIGHTGRAY)
+    current_y += 22
+    draw_shadowed_text(rl.TextFormat("Horizontal threshold: %.2f", horizontal_threshold), 10, current_y, 20, rl.LIGHTGRAY)
+    current_y += 22
+    draw_shadowed_text(rl.TextFormat("Horizontal Difference: %.3f", horizontal_delta - horizontal_threshold), 10, current_y, 20, rl.LIGHTGRAY)
+    current_y += 22
+    draw_shadowed_text(rl.TextFormat("Vertical Difference: %.3f", vertical_delta - vertical_threshold), 10, current_y, 20, rl.LIGHTGRAY)
 
-    rl.DrawRectangleLinesEx(scroll_bounds, 1.0, rl.PINK)
+    // rl.DrawRectangleLinesEx(scroll_bounds, 2.0, rl.PINK)
 
     rl.EndDrawing()
 
