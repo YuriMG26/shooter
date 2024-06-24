@@ -5,18 +5,55 @@ import "core:fmt"
 import "core:math"
 import rand "core:math/rand"
 
+FLAT_GREEN :: rl.Color { 0xAC, 0xFB, 0xC5, 0xFF }
+
 player_pos: [2]f32
 player_size: [2]f32
 player_rotation: f32
+player_health := f32(100)
+player_default_size :: 80
 
 delta_time: f32
 
+dash_timestamp := 0.0
+dash_duration :: 0.1
+dash_cooldown : f32 = 0.0
+is_dash_cooldown := false
+dash_begin_position := rl.Vector2{}
+
+normalized_player_direction: rl.Vector2
+player_dash_target := rl.Vector2{}
+player_direction := rl.Vector2{}
+dash_vector := rl.Vector2{}
 move_player :: proc()
 {
-  if rl.IsKeyDown(.W) do player_pos.y -= 100 * delta_time
-  if rl.IsKeyDown(.S) do player_pos.y += 100 * delta_time
-  if rl.IsKeyDown(.A) do player_pos.x -= 100 * delta_time
-  if rl.IsKeyDown(.D) do player_pos.x += 100 * delta_time
+  player_direction = 0
+  if is_dash_cooldown {
+    dash_cooldown -= rl.GetFrameTime()
+    if dash_cooldown <= 0 do is_dash_cooldown = false
+    if dash_duration + dash_timestamp > rl.GetTime() {
+      player_direction += dash_vector * (rl.GetFrameTime() / dash_duration)
+    }
+  }
+
+  if rl.IsKeyDown(.W) do player_direction.y -= 200 * delta_time
+  if rl.IsKeyDown(.S) do player_direction.y += 200 * delta_time
+  if rl.IsKeyDown(.A) do player_direction.x -= 200 * delta_time
+  if rl.IsKeyDown(.D) do player_direction.x += 200 * delta_time
+
+  normalized_player_direction = rl.Vector2Normalize(player_direction)
+
+  if !is_dash_cooldown && rl.IsKeyPressed(.SPACE) && normalized_player_direction != rl.Vector2(0) {
+    // begin dash state
+    player_dash_target = player_pos + normalized_player_direction * 400
+    dash_timestamp = rl.GetTime()
+    is_dash_cooldown = true 
+    dash_cooldown = 3.0
+    dash_begin_position = player_pos
+    dash_vector = player_dash_target - dash_begin_position
+  }
+
+  player_pos += player_direction
 }
 
 screen_width: f32
@@ -42,17 +79,32 @@ Bullet :: struct
 Enemy :: struct
 {
   x, y: f32,
+  starting_health: f32,
   health: f32,
   speed: f32,
+  starting_speed: f32,
 }
 
 bullets: [dynamic]Bullet
 enemies: [dynamic]Enemy
 
+spaw_enemy_random :: proc()
+{
+  x := rand.float32_range(0, screen_width)
+  y := rand.float32_range(0, screen_height)
+  speed := rand.float32_range(0, 200)
+  enemy_to_spawn := Enemy {
+    x = x, y = y, health = 100, speed = speed,
+    starting_health = 100, starting_speed = speed,
+  }
+  append(&enemies, enemy_to_spawn)
+}
+
 spawn_enemy :: proc(x, y, health, speed: f32)
 {
   enemy_to_spawn := Enemy {
-    x = x, y = y, health = health, speed = speed
+    x = x, y = y, health = health, speed = speed,
+    starting_health = health, starting_speed = speed,
   }
   append(&enemies, enemy_to_spawn)
 }
@@ -60,7 +112,8 @@ spawn_enemy :: proc(x, y, health, speed: f32)
 simulate_enemies :: proc()
 {
   for &enemy, index in enemies {
-    if(enemy.health <= 0) do unordered_remove(&enemies, index)
+    if enemy.health <= enemy.starting_health / 2 do enemy.speed = enemy.starting_speed / 2
+    if enemy.health <= 0 do unordered_remove(&enemies, index)
     direction := rl.Vector2Normalize(rl.Vector2{player_pos.x - enemy.x, player_pos.y - enemy.y})
     enemy.x += direction.x * delta_time * enemy.speed
     enemy.y += direction.y * delta_time * enemy.speed
@@ -119,13 +172,35 @@ draw_bullets :: proc()
 
 check_collision :: proc()
 {
-  for &enemy, enemy_index in enemies {
-    for &bullet, bullet_index in bullets {
+  for &bullet, bullet_index in bullets {
+    bullet_removed := false
+    for &enemy, enemy_index in enemies {
       if rl.CheckCollisionCircles(rl.Vector2{bullet.x, bullet.y}, default_bullet_size / 2, rl.Vector2{enemy.x, enemy.y}, default_enemy_size / 2) {
+        fmt.printfln("Bullet %d collided with enemy %d", bullet_index, enemy_index)
+        bullet_removed = true
         unordered_remove(&bullets, bullet_index)
         enemy.health -= 50
+        break
       }
     }
+    if !bullet_removed && rl.CheckCollisionCircles(rl.Vector2{bullet.x, bullet.y}, default_bullet_size / 2, player_pos, player_default_size / 2) {
+      unordered_remove(&bullets, bullet_index)
+      player_health -= 30
+    }
+  }
+}
+
+draw_shadowed_text :: proc(str: cstring, x, y, size: i32, color: rl.Color)
+{
+  rl.DrawText(str, x + 2, y + 2, size, rl.BLACK)
+  rl.DrawText(str, x, y, size, color)
+}
+
+rectangle_from_points :: #force_inline proc(a, b: [2]f32) -> rl.Rectangle
+{
+  return rl.Rectangle {
+    a.x, a.y,
+    b.x - a.x, b.y - a.y 
   }
 }
 
@@ -133,6 +208,8 @@ mouse_position: rl.Vector2
 main :: proc()
 {
   rl.InitWindow(1280, 720, "hmmmm")
+  rl.SetWindowState(rl.ConfigFlags{.WINDOW_RESIZABLE, .MSAA_4X_HINT})
+  rl.SetTargetFPS(240)
   defer rl.CloseWindow()
 
   window_is_resized()
@@ -141,7 +218,6 @@ main :: proc()
 
   player_size = { 80, 80 }
   player_pos = { screen_width / 2, screen_height / 2 }
-
   
   for i in 0..<3 {
     x := rand.float32_range(0, screen_width)
@@ -153,7 +229,16 @@ main :: proc()
 
   target_zoom := f32(1.0)
 
-  for !rl.WindowShouldClose()
+  game_is_running := true
+
+  redbar_value := f32(-60)
+
+
+  scroll_bounds_a: [2]f32 = {screen_width * 0.25, screen_height * 0.1}
+  scroll_bounds_b: [2]f32 = {screen_width - (screen_width * 0.25), screen_height - (screen_height * 0.1)}
+  scroll_bounds := rectangle_from_points(scroll_bounds_a, scroll_bounds_b)
+
+  for game_is_running
   {
     if rl.IsWindowResized() {
       window_is_resized()
@@ -169,26 +254,35 @@ main :: proc()
     simulate_bullets()
     simulate_enemies()
 
-
-    game_camera.target = rl.Vector2{ player_pos.x, player_pos.y }
+    // game_camera.target = rl.Vector2{ player_pos.x, player_pos.y }
+    player_screen_position := rl.GetWorldToScreen2D(player_pos, game_camera)
 
     target_zoom += rl.GetMouseWheelMove() * 0.05;
+
+    if rl.IsKeyPressed(.MINUS) do target_zoom -= 0.5 
+    if rl.IsKeyPressed(.EQUAL) do target_zoom += 0.5 
+    if rl.IsKeyPressed(.NINE) do spaw_enemy_random() 
+
+    target_zoom = rl.Clamp(target_zoom, 0.1, 10)
     game_camera.zoom = rl.Lerp(game_camera.zoom, target_zoom, 0.1)
     mouse_position = rl.GetScreenToWorld2D(rl.GetMousePosition(), game_camera)
 
     check_collision()
 
-    mouse_direction: rl.Vector2 = { mouse_position.x - player_pos.x, mouse_position.y - player_pos.y }
+    mouse_direction: rl.Vector2 = mouse_position - player_pos
     mouse_direction = rl.Vector2Normalize(mouse_direction)
 
-
     if rl.IsMouseButtonPressed(.LEFT) {
-      x := player_pos.x + mouse_direction.x
-      y := player_pos.y + mouse_direction.y
+      x := player_pos.x + (mouse_direction.x * ((player_default_size / 2) + 5))
+      y := player_pos.y + (mouse_direction.y * ((player_default_size / 2) + 5))
       spawn_bullet(x, y, player_rotation, {mouse_direction.x, mouse_direction.y})
     }
 
     move_player()
+
+    if player_health <= 0 {
+      game_is_running = false
+    }
 
     rl.BeginMode2D(game_camera)
 
@@ -197,21 +291,49 @@ main :: proc()
     rl.DrawLineV(rl.Vector2{ player_pos.x, player_pos.y }, mouse_position, rl.RED)
 
     rl.DrawRectanglePro(rl.Rectangle{ player_pos.x, player_pos.y, player_size.x, player_size.y }, rl.Vector2{ player_size.x / 2, player_size.y / 2 }, player_rotation, rl.WHITE)
+    // drawing cooldown bar
+
+    cooldown_bar_height := f32(dash_cooldown / 3.0) * 60
+    rl.DrawRectanglePro(rectangle_from_points({player_pos.x - player_default_size - 12, player_pos.y + 40 - cooldown_bar_height}, {player_pos.x - player_default_size, player_pos.y + 40}), rl.Vector2(0), 0, rl.RED)
+    
+    rl.DrawRectanglePro(rl.Rectangle{ player_dash_target.x, player_dash_target.y, 20, 20 }, rl.Vector2{ 10, 10 }, 0, rl.ORANGE)
+
+    rl.DrawLineV(player_pos, player_pos + player_direction * 20, rl.PURPLE)
 
     draw_bullets()
     draw_enemies()
 
     rl.EndMode2D()
 
-    current_y := i32(30)
-    rl.DrawText(rl.TextFormat("Position: %.3f, %.3f", player_pos.x, player_pos.y), 10, current_y, 20, rl.BLACK)
-    current_y += 22
-    rl.DrawText(rl.TextFormat("MousePosition: %.3f, %.3f", mouse_position.x, mouse_position.y), 10, current_y, 20, rl.BLACK)
-    current_y += 22
-    rl.DrawText(rl.TextFormat("Rotation: %.3f", player_rotation), 10, current_y, 20, rl.BLACK)
+    if !rl.CheckCollisionCircleRec(rl.Vector2{player_screen_position.x, player_screen_position.y}, player_default_size * 0.5 * game_camera.zoom, scroll_bounds) {
+      scroll_bounds_center := rl.Vector2{screen_width / 2, screen_height / 2}
+      distance_player_from_center := player_pos - scroll_bounds_center
 
-    rl.DrawFPS(10, 10)
+      horizontal_delta := rl.Vector2Length(distance_player_from_center)
+      if horizontal_delta > scroll_bounds.width / 2 {
+        game_camera.target.x += horizontal_delta - scroll_bounds.width / 2  
+      }
+
+      rl.DrawRectangle(auto_cast scroll_bounds_center.x, auto_cast scroll_bounds_center.y, 20, 20, rl.BLACK)
+    }
+
+    current_y := i32(10)
+    draw_shadowed_text(rl.TextFormat("FPS: %i", rl.GetFPS()), 10, current_y, 20, FLAT_GREEN)
+    current_y += 22
+    draw_shadowed_text(rl.TextFormat("MousePosition: %.3f, %.3f", mouse_position.x, mouse_position.y), 10, current_y, 20, rl.WHITE)
+    current_y += 22
+    draw_shadowed_text(rl.TextFormat("Rotation: %.3f", player_rotation), 10, current_y, 20, rl.WHITE)
+    current_y += 22
+    draw_shadowed_text(rl.TextFormat("Player health: %.3f", player_health), 10, current_y, 20, rl.WHITE)
+    if is_dash_cooldown {
+      current_y += 22
+      draw_shadowed_text(rl.TextFormat("Cooldown: %.3f", dash_cooldown), 10, current_y, 20, rl.WHITE)
+    }
+
+    rl.DrawRectangleLinesEx(scroll_bounds, 1.0, rl.PINK)
 
     rl.EndDrawing()
+
+    if game_is_running && rl.WindowShouldClose() do game_is_running = false
   }
 }
