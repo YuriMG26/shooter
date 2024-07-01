@@ -240,6 +240,8 @@ main :: proc()
   scroll_bounds_b: [2]f32 = {screen_width - (screen_width * horizontal_padding), screen_height - (screen_height * vertical_padding)}
   scroll_bounds := rectangle_from_points(scroll_bounds_a, scroll_bounds_b)
 
+  camera_state := 0
+
   for game_is_running
   {
     if rl.IsWindowResized() {
@@ -249,6 +251,9 @@ main :: proc()
 
     player_rotation = math.atan2(player_pos.x - mouse_position.x, mouse_position.y - player_pos.y) 
     player_rotation = math.to_degrees(player_rotation)
+
+    if rl.IsKeyPressed(.SIX) do camera_state = 0
+    else if rl.IsKeyPressed(.SEVEN) do camera_state = 1
 
     rl.BeginDrawing()
     rl.ClearBackground(rl.SKYBLUE)
@@ -316,26 +321,31 @@ main :: proc()
     player_pos_screen := rl.GetWorldToScreen2D(player_pos, game_camera)
 
     camera_midpoint := player_pos_screen + (rl.GetMousePosition() - player_pos_screen) / 2
-    rl.DrawRectangle(auto_cast camera_midpoint.x, auto_cast camera_midpoint.y, 10, 10, rl.BLUE)
 
-    horizontal_delta = math.abs(camera_midpoint.x - scroll_bounds_center.x)
-    vertical_delta   = math.abs(camera_midpoint.y - scroll_bounds_center.y)
-    // if !rl.CheckCollisionPointRec(rl.GetWorldToScreen2D(player_pos, game_camera), scroll_bounds) {
-    if !rl.CheckCollisionPointRec(camera_midpoint, scroll_bounds) {
-      if horizontal_delta > horizontal_threshold {
-        if camera_midpoint.x < scroll_bounds_center.x {
-          game_camera.target.x -= horizontal_delta - horizontal_threshold
-        } else {
-          game_camera.target.x += horizontal_delta - horizontal_threshold  
+    horizontal_delta = math.abs(player_pos_screen.x - scroll_bounds_center.x)
+    vertical_delta   = math.abs(player_pos_screen.y - scroll_bounds_center.y)
+
+    if camera_state == 0 {
+      rl.DrawRectangle(auto_cast player_pos_screen.x, auto_cast player_pos_screen.y, 10, 10, rl.BLUE)
+      if !rl.CheckCollisionPointRec(player_pos_screen, scroll_bounds) {
+        if horizontal_delta > horizontal_threshold {
+          if player_pos_screen.x < scroll_bounds_center.x {
+            game_camera.target.x -= horizontal_delta - horizontal_threshold
+          } else {
+            game_camera.target.x += horizontal_delta - horizontal_threshold  
+          }
+        }
+        if vertical_delta > vertical_threshold {
+          if player_pos_screen.y < scroll_bounds_center.y {
+            game_camera.target.y -= vertical_delta - vertical_threshold
+          } else {
+            game_camera.target.y += vertical_delta - vertical_threshold  
+          }
         }
       }
-      if vertical_delta > vertical_threshold {
-        if camera_midpoint.y < scroll_bounds_center.y {
-          game_camera.target.y -= vertical_delta - vertical_threshold
-        } else {
-          game_camera.target.y += vertical_delta - vertical_threshold  
-        }
-      }
+    }
+    else if camera_state == 1 {
+      game_camera.target = player_pos
     }
 
     current_y := i32(10)
