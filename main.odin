@@ -314,22 +314,23 @@ main :: proc()
     horizontal_threshold := scroll_bounds.width / 2
     vertical_threshold := scroll_bounds.height / 2
     player_pos_screen := rl.GetWorldToScreen2D(player_pos, game_camera)
-    horizontal_delta = math.abs(player_pos_screen.x - scroll_bounds_center.x)
-    vertical_delta   = math.abs(player_pos_screen.y - scroll_bounds_center.y)
-    // horizontal_delta = player_pos_screen.x - scroll_bounds_center.x
-    // vertical_delta   = player_pos_screen.y - scroll_bounds_center.y
-    if !rl.CheckCollisionPointRec(rl.GetWorldToScreen2D(player_pos, game_camera), scroll_bounds) {
-      distance_player_from_center := player_pos - scroll_bounds_center
 
+    camera_midpoint := player_pos_screen + (rl.GetMousePosition() - player_pos_screen) / 2
+    rl.DrawRectangle(auto_cast camera_midpoint.x, auto_cast camera_midpoint.y, 10, 10, rl.BLUE)
+
+    horizontal_delta = math.abs(camera_midpoint.x - scroll_bounds_center.x)
+    vertical_delta   = math.abs(camera_midpoint.y - scroll_bounds_center.y)
+    // if !rl.CheckCollisionPointRec(rl.GetWorldToScreen2D(player_pos, game_camera), scroll_bounds) {
+    if !rl.CheckCollisionPointRec(camera_midpoint, scroll_bounds) {
       if horizontal_delta > horizontal_threshold {
-        if player_pos_screen.x < scroll_bounds_center.x {
+        if camera_midpoint.x < scroll_bounds_center.x {
           game_camera.target.x -= horizontal_delta - horizontal_threshold
         } else {
           game_camera.target.x += horizontal_delta - horizontal_threshold  
         }
       }
       if vertical_delta > vertical_threshold {
-        if player_pos_screen.y < scroll_bounds_center.y {
+        if camera_midpoint.y < scroll_bounds_center.y {
           game_camera.target.y -= vertical_delta - vertical_threshold
         } else {
           game_camera.target.y += vertical_delta - vertical_threshold  
@@ -364,7 +365,7 @@ main :: proc()
     current_y += 22
     draw_shadowed_text(rl.TextFormat("Vertical Difference: %.3f", vertical_delta - vertical_threshold), 10, current_y, 20, rl.LIGHTGRAY)
 
-    // rl.DrawRectangleLinesEx(scroll_bounds, 2.0, rl.PINK)
+    rl.DrawRectangleLinesEx(scroll_bounds, 2.0, rl.PINK)
 
     rl.EndDrawing()
 
