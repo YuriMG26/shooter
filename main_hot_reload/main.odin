@@ -58,7 +58,7 @@ main :: proc()
       new_game_api, new_game_api_ok := load_game_api(game_api_version)
 
       if new_game_api_ok {
-        if game_api.memory_size() != new_game_api.memory_size() {
+        if game_api.memory_size() != new_game_api.memory_size() || force_restart {
           // handle restart
           game_api.shutdown()
           for &g in old_game_apis do unload_game_api(&g)
@@ -80,7 +80,7 @@ main :: proc()
   }
 
   for &g in old_game_apis do unload_game_api(&g)
-
+  unload_game_api(&game_api)
   delete(old_game_apis)
 }
 

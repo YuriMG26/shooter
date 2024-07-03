@@ -4,6 +4,7 @@ import rl "vendor:raylib"
 import "core:math"
 import rand "core:math/rand"
 import "core:fmt"
+import "core:math/linalg"
 
 FLAT_GREEN :: rl.Color { 0xAC, 0xFB, 0xC5, 0xFF }
 
@@ -63,6 +64,9 @@ GameMemory :: struct
   scroll_bounds_a: [2]f32,
   scroll_bounds_b: [2]f32,
   scroll_bounds: rl.Rectangle,
+
+  hide_cursor: bool,
+  cursor_texture: rl.Texture2D
 }
 
 g_mem: ^GameMemory
@@ -79,10 +83,10 @@ move_player :: proc()
     }
   }
 
-  if rl.IsKeyDown(.W) do player_direction.y -= 200 * delta_time
-  if rl.IsKeyDown(.S) do player_direction.y += 200 * delta_time
-  if rl.IsKeyDown(.A) do player_direction.x -= 200 * delta_time
-  if rl.IsKeyDown(.D) do player_direction.x += 200 * delta_time
+  if rl.IsKeyDown(.W) do player_direction.y -= 600 * delta_time
+  if rl.IsKeyDown(.S) do player_direction.y += 600 * delta_time
+  if rl.IsKeyDown(.A) do player_direction.x -= 600 * delta_time
+  if rl.IsKeyDown(.D) do player_direction.x += 600 * delta_time
 
   normalized_player_direction = rl.Vector2Normalize(player_direction)
 
@@ -234,10 +238,19 @@ rectangle_from_points :: #force_inline proc(a, b: [2]f32) -> rl.Rectangle
 update_and_render :: proc() -> bool
 {
   using g_mem
-  
+
+  if rl.IsKeyPressed(.SCROLL_LOCK) {
+    if hide_cursor {
+      hide_cursor = false
+      rl.ShowCursor()
+    } else {
+      hide_cursor = true
+      rl.HideCursor()
+    }
+  }
   // TODO: remove
-  horizontal_padding = f32(0.4)
-  vertical_padding = f32(0.3)
+  horizontal_padding = f32(0.45)
+  vertical_padding = f32(0.45)
   scroll_bounds_a = {screen_width * horizontal_padding, screen_height * vertical_padding}
   scroll_bounds_b = {screen_width - (screen_width * horizontal_padding), screen_height - (screen_height * vertical_padding)}
   scroll_bounds = rectangle_from_points(scroll_bounds_a, scroll_bounds_b)
@@ -317,23 +330,28 @@ update_and_render :: proc() -> bool
   vertical_threshold := scroll_bounds.height / 2
   player_pos_screen := rl.GetWorldToScreen2D(player_pos, game_camera)
 
-  camera_midpoint := player_pos_screen + (rl.GetMousePosition() - player_pos_screen) / 2
+  camera_midpoint_coef: f32 = 10.0
+  if rl.IsKeyDown(.LEFT_SHIFT) do camera_midpoint_coef = 200.0
+  camera_midpoint := player_pos_screen + rl.Vector2Normalize((rl.GetMousePosition() - player_pos_screen)) * camera_midpoint_coef
 
-  horizontal_delta = math.abs(player_pos_screen.x - scroll_bounds_center.x)
-  vertical_delta   = math.abs(player_pos_screen.y - scroll_bounds_center.y)
-
-  if camera_state == 0 {
-    rl.DrawRectangle(auto_cast player_pos_screen.x, auto_cast player_pos_screen.y, 10, 10, rl.BLUE)
-    if !rl.CheckCollisionPointRec(player_pos_screen, scroll_bounds) {
+  point_to_centralize := camera_midpoint
+  horizontal_delta = math.abs(point_to_centralize.x - scroll_bounds_center.x)
+  vertical_delta   = math.abs(point_to_centralize.y - scroll_bounds_center.y)
+  camera_target := rl.GetScreenToWorld2D(point_to_centralize, game_camera)
+  game_camera.target.x = math.lerp(game_camera.target.x, camera_target.x, f32(0.1))
+  game_camera.target.y = math.lerp(game_camera.target.y, camera_target.y, f32(0.1))
+  if false && camera_state == 0 {
+    rl.DrawRectangle(auto_cast point_to_centralize.x, auto_cast point_to_centralize.y, 10, 10, rl.BLUE)
+    if !rl.CheckCollisionPointRec(point_to_centralize, scroll_bounds) {
       if horizontal_delta > horizontal_threshold {
-        if player_pos_screen.x < scroll_bounds_center.x {
+        if point_to_centralize.x < scroll_bounds_center.x {
           game_camera.target.x -= horizontal_delta - horizontal_threshold
         } else {
           game_camera.target.x += horizontal_delta - horizontal_threshold  
         }
       }
       if vertical_delta > vertical_threshold {
-        if player_pos_screen.y < scroll_bounds_center.y {
+        if point_to_centralize.y < scroll_bounds_center.y {
           game_camera.target.y -= vertical_delta - vertical_threshold
         } else {
           game_camera.target.y += vertical_delta - vertical_threshold  
@@ -372,7 +390,9 @@ update_and_render :: proc() -> bool
   current_y += 22
   draw_shadowed_text(rl.TextFormat("Vertical Difference: %.3f", vertical_delta - vertical_threshold), 10, current_y, 20, rl.LIGHTGRAY)
 
-  rl.DrawRectangleLinesEx(scroll_bounds, 2.0, rl.PINK)
+  //rl.DrawRectangleLinesEx(scroll_bounds, 2.0, rl.PINKo)
+  screen_mouse_position := rl.GetMousePosition()
+  rl.DrawTexturePro(cursor_texture, rl.Rectangle{ 0, 0, auto_cast cursor_texture.width, auto_cast cursor_texture.height }, { screen_mouse_position.x, screen_mouse_position.y, auto_cast cursor_texture.width, auto_cast cursor_texture.height }, { auto_cast cursor_texture.width / 2, auto_cast cursor_texture.height / 2 }, f32(0.0),  rl.WHITE)
 
   rl.EndDrawing()
 
@@ -391,7 +411,8 @@ game_init:: proc()
 {
   g_mem = new(GameMemory)
   using g_mem
-  rl.SetTargetFPS(60)
+  hide_cursor = true
+  rl.SetTargetFPS(0)
   window_is_resized()
   game_camera.zoom = 0.1
   target_zoom = 1.0
@@ -405,6 +426,7 @@ game_init:: proc()
   player_health = 100
   camera_state = 0
   background = rl.LoadTexture("assets/grass.png")
+  cursor_texture = rl.LoadTexture("assets/crosshair.png")
   for i in 0..<3 {
     x := rand.float32_range(0, screen_width)
     y := rand.float32_range(0, screen_height)
