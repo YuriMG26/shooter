@@ -5,6 +5,7 @@ import "core:math"
 import rand "core:math/rand"
 import "core:fmt"
 import "core:math/linalg"
+import "core:log"
 
 FLAT_GREEN :: rl.Color { 0xAC, 0xFB, 0xC5, 0xFF }
 
@@ -50,8 +51,6 @@ GameMemory :: struct
   screen_width: f32,
   screen_height: f32,
   game_camera: rl.Camera2D,
-  bullets: [dynamic]Bullet,
-  enemies: [dynamic]Enemy,
   mouse_position: rl.Vector2,
   // camera
   camera_state: int,
@@ -66,7 +65,10 @@ GameMemory :: struct
   scroll_bounds: rl.Rectangle,
 
   hide_cursor: bool,
-  cursor_texture: rl.Texture2D
+  cursor_texture: rl.Texture2D,
+
+  bullets: [dynamic]Bullet,
+  enemies: [dynamic]Enemy,
 }
 
 g_mem: ^GameMemory
@@ -165,6 +167,7 @@ draw_enemies :: proc()
 
 spawn_bullet :: proc(x, y, rotation: f32, direction: [2]f32)
 {
+  when true {
   using g_mem
   bullet_to_spawn := Bullet {
     x = x, y = y,
@@ -172,8 +175,9 @@ spawn_bullet :: proc(x, y, rotation: f32, direction: [2]f32)
     time_to_live = 3.0,
     spawned_in = rl.GetTime() // TODO: game timer
   }
-  fmt.printfln("Spawning bullet at %.2f %.2f", x, y)
   append(&bullets, bullet_to_spawn)
+  fmt.printfln("Spawning bullet \t bullet size: {0} \t container: %p", len(bullets), &bullets) 
+  }
 }
 
 simulate_bullets :: proc()
@@ -184,6 +188,7 @@ simulate_bullets :: proc()
   for &bullet, index in bullets {
     // maybe needs two loops so it doesn't get any inconsistencies.
     if bullet.time_to_live + bullet.spawned_in < rl.GetTime() {
+      fmt.printfln("Removing bullet {0} \t bullet size: {1} \t container: %p", index, len(bullets), &bullets) 
       unordered_remove(&bullets, index)
       continue
     }
@@ -392,7 +397,7 @@ update_and_render :: proc() -> bool
 
   //rl.DrawRectangleLinesEx(scroll_bounds, 2.0, rl.PINKo)
   screen_mouse_position := rl.GetMousePosition()
-  rl.DrawTexturePro(cursor_texture, rl.Rectangle{ 0, 0, auto_cast cursor_texture.width, auto_cast cursor_texture.height }, { screen_mouse_position.x, screen_mouse_position.y, auto_cast cursor_texture.width, auto_cast cursor_texture.height }, { auto_cast cursor_texture.width / 2, auto_cast cursor_texture.height / 2 }, f32(0.0),  rl.WHITE)
+  rl.DrawTexturePro(cursor_texture, rl.Rectangle{ 0, 0, auto_cast cursor_texture.width, auto_cast cursor_texture.height }, { screen_mouse_position.x, screen_mouse_position.y, auto_cast cursor_texture.width * 2, auto_cast cursor_texture.height * 2 }, { auto_cast cursor_texture.width, auto_cast cursor_texture.height}, f32(0.0),  rl.WHITE)
 
   rl.EndDrawing()
 
@@ -403,19 +408,24 @@ update_and_render :: proc() -> bool
 game_init_window :: proc()
 {
   rl.InitWindow(1280, 720, "Shooter Game")
+  rl.SetTargetFPS(60)
   rl.SetExitKey(nil)
+  rl.HideCursor()
 }
 
 @(export)
-game_init:: proc()
+game_init :: proc()
 {
   g_mem = new(GameMemory)
   using g_mem
   hide_cursor = true
-  rl.SetTargetFPS(0)
   window_is_resized()
   game_camera.zoom = 0.1
   target_zoom = 1.0
+
+  reserve(&bullets, 128)
+  reserve(&enemies, 128)
+
   player_size = {80, 80}
   player_pos = {screen_width / 2, screen_height / 2}
   horizontal_padding = f32(0.4)
@@ -430,7 +440,8 @@ game_init:: proc()
   for i in 0..<3 {
     x := rand.float32_range(0, screen_width)
     y := rand.float32_range(0, screen_height)
-    spawn_enemy(x, y, 100, 100)
+    //spawn_enemy(x, y, 100, 100)
+    fmt.printfln("Spawning enemy {0}", i)
   }
 }
 
@@ -438,8 +449,7 @@ game_init:: proc()
 game_update:: proc() -> bool
 {
   using g_mem
-  update_and_render()
-  return rl.WindowShouldClose() == false
+  return update_and_render() && rl.WindowShouldClose() == false
 }
 
 @(export)
