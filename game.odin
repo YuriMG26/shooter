@@ -183,7 +183,7 @@ spawn_bullet :: proc(x, y, rotation: f32, direction: [2]f32)
 simulate_bullets :: proc()
 {
   using g_mem
-  bullet_speed :: 500
+  bullet_speed :: 1000
   // first check if any died
   for &bullet, index in bullets {
     // maybe needs two loops so it doesn't get any inconsistencies.
@@ -294,13 +294,14 @@ update_and_render :: proc() -> bool
   mouse_direction: rl.Vector2 = mouse_position - player_pos
   mouse_direction = rl.Vector2Normalize(mouse_direction)
 
+  move_player()
+
   if rl.IsMouseButtonPressed(.LEFT) {
-    x := player_pos.x + (mouse_direction.x * ((player_default_size / 2) + 5))
-    y := player_pos.y + (mouse_direction.y * ((player_default_size / 2) + 5))
+    x := player_pos.x + (mouse_direction.x * ((player_default_size / 2) + 15))
+    y := player_pos.y + (mouse_direction.y * ((player_default_size / 2) + 15))
     spawn_bullet(x, y, player_rotation, {mouse_direction.x, mouse_direction.y})
   }
 
-  move_player()
 
   if player_health <= 0 {
     return false
