@@ -1,74 +1,83 @@
 package game
 
-import rl "vendor:raylib"
-import "core:math"
+import      "core:strconv"
+import      "base:intrinsics"
+import rl   "vendor:raylib"
+import      "core:math"
 import rand "core:math/rand"
-import "core:fmt"
-import "core:math/linalg"
-import "core:log"
+import      "core:fmt"
+import      "core:math/linalg"
+import      "core:log"
+import      "core:os"
 
 FLAT_GREEN :: rl.Color { 0xAC, 0xFB, 0xC5, 0xFF }
 
 // global constants
 player_default_size :: 80
-dash_duration :: 0.1
-default_enemy_size :: 150
+dash_duration       :: 0.1
+default_enemy_size  :: 150
 default_bullet_size :: 8
 
 Bullet :: struct
 {
-  x, y: f32,
-  direction: [2]f32,
+  x, y        : f32,
+  direction   : [2]f32,
   time_to_live: f64,
-  spawned_in: f64,
+  spawned_in  : f64,
 }
 
 Enemy :: struct
 {
-  x, y: f32,
+  x, y           : f32,
   starting_health: f32,
-  health: f32,
-  speed: f32,
-  starting_speed: f32,
+  health         : f32,
+  speed          : f32,
+  starting_speed : f32,
+}
+
+Arguments :: struct
+{
+  width   : int,
+  height  : int
 }
 
 GameMemory :: struct
 {
 // TODO Default Values
-  player_pos: [2]f32,
-  player_size: [2]f32,
-  player_rotation: f32,
-  player_health: f32, // default = 100
-  delta_time: f32,
-  dash_timestamp: f64,
-  dash_cooldown: f32,
-  is_dash_cooldown: bool, // default = false
-  dash_begin_position: rl.Vector2,
+  player_pos                 : [2]f32,
+  player_size                : [2]f32,
+  player_rotation            : f32,
+  player_health              : f32, // default = 100
+  delta_time                 : f32,
+  dash_timestamp             : f64,
+  dash_cooldown              : f32,
+  is_dash_cooldown           : bool, // default = false
+  dash_begin_position        : rl.Vector2,
   normalized_player_direction: rl.Vector2,
-  player_dash_target: rl.Vector2,
-  player_direction: rl.Vector2,
-  dash_vector: rl.Vector2,
-  screen_width: f32,
-  screen_height: f32,
-  game_camera: rl.Camera2D,
-  mouse_position: rl.Vector2,
+  player_dash_target         : rl.Vector2,
+  player_direction           : rl.Vector2,
+  dash_vector                : rl.Vector2,
+  screen_width               : f32,
+  screen_height              : f32,
+  game_camera                : rl.Camera2D,
+  mouse_position             : rl.Vector2,
   // camera
-  camera_state: int,
-  target_zoom: f32,
+  camera_state               : int,
+  target_zoom                : f32,
 
-  background: rl.Texture,
+  background                 : rl.Texture,
   
-  horizontal_padding: f32, // 0.4
-  vertical_padding: f32, // 0.3
-  scroll_bounds_a: [2]f32,
-  scroll_bounds_b: [2]f32,
-  scroll_bounds: rl.Rectangle,
+  horizontal_padding         : f32, // 0.4
+  vertical_padding           : f32, // 0.3
+  scroll_bounds_a            : [2]f32,
+  scroll_bounds_b            : [2]f32,
+  scroll_bounds              : rl.Rectangle,
 
-  hide_cursor: bool,
-  cursor_texture: rl.Texture2D,
+  hide_cursor                : bool,
+  cursor_texture             : rl.Texture2D,
 
-  bullets: [dynamic]Bullet,
-  enemies: [dynamic]Enemy,
+  bullets                    : [dynamic]Bullet,
+  enemies                    : [dynamic]Enemy,
 }
 
 g_mem: ^GameMemory
@@ -115,7 +124,7 @@ window_is_resized :: proc()
 }
 
 
-spaw_enemy_random :: proc()
+spawn_enemy_random :: proc()
 {
   using g_mem
   x := rand.float32_range(0, screen_width)
@@ -283,7 +292,7 @@ update_and_render :: proc() -> bool
 
   if rl.IsKeyPressed(.MINUS) do target_zoom -= 0.5 
   if rl.IsKeyPressed(.EQUAL) do target_zoom += 0.5 
-  if rl.IsKeyPressed(.NINE) do spaw_enemy_random() 
+  if rl.IsKeyPressed(.NINE) do spawn_enemy_random() 
 
   target_zoom = rl.Clamp(target_zoom, 0.1, 10)
   game_camera.zoom = rl.Lerp(game_camera.zoom, target_zoom, 0.1)
@@ -396,7 +405,6 @@ update_and_render :: proc() -> bool
   current_y += 22
   draw_shadowed_text(rl.TextFormat("Vertical Difference: %.3f", vertical_delta - vertical_threshold), 10, current_y, 20, rl.LIGHTGRAY)
 
-  //rl.DrawRectangleLinesEx(scroll_bounds, 2.0, rl.PINKo)
   screen_mouse_position := rl.GetMousePosition()
   rl.DrawTexturePro(cursor_texture, rl.Rectangle{ 0, 0, auto_cast cursor_texture.width, auto_cast cursor_texture.height }, { screen_mouse_position.x, screen_mouse_position.y, auto_cast cursor_texture.width * 2, auto_cast cursor_texture.height * 2 }, { auto_cast cursor_texture.width, auto_cast cursor_texture.height}, f32(0.0),  rl.WHITE)
 
@@ -405,10 +413,41 @@ update_and_render :: proc() -> bool
   return true
 }
 
+parse_argument :: proc($T: typeid, argument: string) -> T
+  where intrinsics.type_is_integer(T)
+{
+  result, ok := strconv.parse_int(argument)
+  return result
+}
+
+parse_arguments :: proc(arguments: ^Arguments)
+{
+  for arg, i in os.args {
+    if arg == "-w"  && i + 1 != len(os.args) {
+      arguments.width = parse_argument(int, os.args[i+1])
+    }
+    else if arg == "-h"  && i + 1 != len(os.args) {
+      arguments.height = parse_argument(int, os.args[i+1])
+    }
+    fmt.println(arg)
+  }
+}
+
+load_default_arguments :: proc() -> Arguments
+{
+  result: Arguments
+  result.width = 1280
+  result.height = 720
+  return result
+}
+
 @(export)
 game_init_window :: proc()
 {
-  rl.InitWindow(1280, 720, "Shooter Game")
+  args := load_default_arguments()
+  parse_arguments(&args)
+  rl.SetConfigFlags({.MSAA_4X_HINT, .WINDOW_RESIZABLE})
+  rl.InitWindow(i32(args.width), 720, "Shooter Game")
   rl.SetTargetFPS(60)
   rl.SetExitKey(nil)
   rl.HideCursor()
