@@ -24,6 +24,8 @@ Bullet :: struct
   direction   : [2]f32,
   time_to_live: f64,
   spawned_in  : f64,
+  speed       : f64,
+  type        : f64,
 }
 
 Enemy :: struct
@@ -176,23 +178,22 @@ draw_enemies :: proc()
 
 spawn_bullet :: proc(x, y, rotation: f32, direction: [2]f32)
 {
-  when true {
   using g_mem
   bullet_to_spawn := Bullet {
     x = x, y = y,
     direction = direction,
     time_to_live = 3.0,
-    spawned_in = rl.GetTime() // TODO: game timer
+    spawned_in = rl.GetTime(), // TODO: game timer
+    speed = 1000,
+    type = 1
   }
   append(&bullets, bullet_to_spawn)
   fmt.printfln("Spawning bullet \t bullet size: {0} \t container: %p", len(bullets), &bullets) 
-  }
 }
 
 simulate_bullets :: proc()
 {
   using g_mem
-  bullet_speed :: 1000
   // first check if any died
   for &bullet, index in bullets {
     // maybe needs two loops so it doesn't get any inconsistencies.
@@ -201,8 +202,8 @@ simulate_bullets :: proc()
       unordered_remove(&bullets, index)
       continue
     }
-    bullet.x += bullet.direction.x * delta_time * bullet_speed
-    bullet.y += bullet.direction.y * delta_time * bullet_speed
+    bullet.x += bullet.direction.x * delta_time * auto_cast bullet.speed
+    bullet.y += bullet.direction.y * delta_time * auto_cast bullet.speed
   }
 }
 
@@ -310,7 +311,6 @@ update_and_render :: proc() -> bool
     y := player_pos.y + (mouse_direction.y * ((player_default_size / 2) + 15))
     spawn_bullet(x, y, player_rotation, {mouse_direction.x, mouse_direction.y})
   }
-
 
   if player_health <= 0 {
     return false
