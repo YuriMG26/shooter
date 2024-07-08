@@ -413,21 +413,26 @@ update_and_render :: proc() -> bool
   return true
 }
 
-parse_argument :: proc($T: typeid, argument: string) -> T
+parse_argument :: proc($T: typeid, argument: string) -> (T, bool)
   where intrinsics.type_is_integer(T)
 {
-  result, ok := strconv.parse_int(argument)
-  return result
+  return strconv.parse_int(argument)
 }
 
 parse_arguments :: proc(arguments: ^Arguments)
 {
   for arg, i in os.args {
     if arg == "-w"  && i + 1 != len(os.args) {
-      arguments.width = parse_argument(int, os.args[i+1])
+      argument, ok := parse_argument(int, os.args[i+1])
+      if ok {
+        arguments.width = argument
+      }
     }
     else if arg == "-h"  && i + 1 != len(os.args) {
-      arguments.height = parse_argument(int, os.args[i+1])
+      argument, ok := parse_argument(int, os.args[i+1])
+      if ok {
+        arguments.height = argument
+      }
     }
     fmt.println(arg)
   }
