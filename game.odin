@@ -18,6 +18,24 @@ dash_duration       :: 0.1
 default_enemy_size  :: 150
 default_bullet_size :: 8
 
+GunType :: enum
+{
+  SemiAuto,
+  Burst,
+  Auto
+}
+
+Gun :: struct
+{
+  type            : GunType,
+  rpm             : int,
+  spread          : f64,
+  bullet_speed    : f64,
+
+  last_shoot_time : f64,
+  next_shoot_time : f64,
+}
+
 Bullet :: struct
 {
   x, y        : f32,
@@ -40,7 +58,9 @@ Enemy :: struct
 Arguments :: struct
 {
   width   : int,
-  height  : int
+  height  : int,
+  msaa    : bool,
+  fullscreen    : bool,
 }
 
 GameMemory :: struct
@@ -50,6 +70,7 @@ GameMemory :: struct
   player_size                : [2]f32,
   player_rotation            : f32,
   player_health              : f32, // default = 100
+  player_gun                 : Gun,
   delta_time                 : f32,
   dash_timestamp             : f64,
   dash_cooldown              : f32,
@@ -176,7 +197,37 @@ draw_enemies :: proc()
   }
 }
 
-spawn_bullet :: proc(x, y, rotation: f32, direction: [2]f32)
+simulate_player_gun :: proc(mouse_direction: [2]f32)
+{
+  using g_mem
+
+  // TODO: better logic for dispatch
+  func := rl.IsMouseButtonDown
+  #partial switch player_gun.type
+  {
+    case .Auto: {
+      func = rl.IsMouseButtonDown
+    }
+    case .SemiAuto: {
+      func = rl.IsMouseButtonPressed
+    }
+    
+  }
+  if func(.LEFT) {
+    gun := &player_gun
+    inv_rpm := f64(60.0) / f64(gun.rpm)
+
+    if rl.GetTime() > gun.next_shoot_time {
+      x := player_pos.x + (mouse_direction.x * ((player_default_size / 2) + 15))
+      y := player_pos.y + (mouse_direction.y * ((player_default_size / 2) + 15))
+      spawn_bullet(x, y, player_rotation, {mouse_direction.x, mouse_direction.y}, gun.bullet_speed)
+      fmt.printfln("gun.next_shoot_time = {0} + {1} = {2}", rl.GetTime(), inv_rpm, rl.GetTime() + inv_rpm)
+      gun.next_shoot_time = rl.GetTime() + inv_rpm
+    }
+  }
+}
+
+spawn_bullet :: proc(x, y, rotation: f32, direction: [2]f32, speed: f64)
 {
   using g_mem
   bullet_to_spawn := Bullet {
@@ -184,7 +235,7 @@ spawn_bullet :: proc(x, y, rotation: f32, direction: [2]f32)
     direction = direction,
     time_to_live = 3.0,
     spawned_in = rl.GetTime(), // TODO: game timer
-    speed = 1000,
+    speed = speed,
     type = 1
   }
   append(&bullets, bullet_to_spawn)
@@ -306,11 +357,7 @@ update_and_render :: proc() -> bool
 
   move_player()
 
-  if rl.IsMouseButtonPressed(.LEFT) {
-    x := player_pos.x + (mouse_direction.x * ((player_default_size / 2) + 15))
-    y := player_pos.y + (mouse_direction.y * ((player_default_size / 2) + 15))
-    spawn_bullet(x, y, player_rotation, {mouse_direction.x, mouse_direction.y})
-  }
+  simulate_player_gun(mouse_direction)
 
   if player_health <= 0 {
     return false
@@ -393,17 +440,12 @@ update_and_render :: proc() -> bool
     draw_shadowed_text(rl.TextFormat("Cooldown: %.3f", dash_cooldown), 10, current_y, 20, rl.LIGHTGRAY)
   }
   current_y += 22
-  draw_shadowed_text(rl.TextFormat("Vertical distance from center: %.2f", vertical_delta), 10, current_y, 20, rl.LIGHTGRAY)
+  
+  draw_shadowed_text(rl.TextFormat("Current Time: %f", rl.GetTime()), 10, current_y, 20, rl.LIGHTGRAY)
   current_y += 22
-  draw_shadowed_text(rl.TextFormat("Horizontal distance from center: %.2f", horizontal_delta), 10, current_y, 20, rl.LIGHTGRAY)
+
+  draw_shadowed_text(rl.TextFormat("Gun next: %f", player_gun.next_shoot_time), 10, current_y, 20, rl.LIGHTGRAY)
   current_y += 22
-  draw_shadowed_text(rl.TextFormat("Vertical threshold: %.2f", vertical_threshold), 10, current_y, 20, rl.LIGHTGRAY)
-  current_y += 22
-  draw_shadowed_text(rl.TextFormat("Horizontal threshold: %.2f", horizontal_threshold), 10, current_y, 20, rl.LIGHTGRAY)
-  current_y += 22
-  draw_shadowed_text(rl.TextFormat("Horizontal Difference: %.3f", horizontal_delta - horizontal_threshold), 10, current_y, 20, rl.LIGHTGRAY)
-  current_y += 22
-  draw_shadowed_text(rl.TextFormat("Vertical Difference: %.3f", vertical_delta - vertical_threshold), 10, current_y, 20, rl.LIGHTGRAY)
 
   screen_mouse_position := rl.GetMousePosition()
   rl.DrawTexturePro(cursor_texture, rl.Rectangle{ 0, 0, auto_cast cursor_texture.width, auto_cast cursor_texture.height }, { screen_mouse_position.x, screen_mouse_position.y, auto_cast cursor_texture.width * 2, auto_cast cursor_texture.height * 2 }, { auto_cast cursor_texture.width, auto_cast cursor_texture.height}, f32(0.0),  rl.WHITE)
@@ -419,7 +461,7 @@ parse_argument :: proc($T: typeid, argument: string) -> (T, bool)
   return strconv.parse_int(argument)
 }
 
-parse_arguments :: proc(arguments: ^Arguments)
+parse_arguments :: proc(arguments: ^Arguments, flags: ^rl.ConfigFlags)
 {
   for arg, i in os.args {
     if arg == "-w"  && i + 1 != len(os.args) {
@@ -434,8 +476,21 @@ parse_arguments :: proc(arguments: ^Arguments)
         arguments.height = argument
       }
     }
+    else if arg == "-nomsaa" {
+      flags^ -= rl.ConfigFlags{.MSAA_4X_HINT}
+    }
+    else if arg == "-fullscreen" {
+      arguments.fullscreen = true
+    }
     fmt.println(arg)
   }
+}
+
+load_default_flags :: proc() -> rl.ConfigFlags
+{
+  result := rl.ConfigFlags{}
+  result += rl.ConfigFlags{.MSAA_4X_HINT, .WINDOW_RESIZABLE}
+  return result
 }
 
 load_default_arguments :: proc() -> Arguments
@@ -443,6 +498,8 @@ load_default_arguments :: proc() -> Arguments
   result: Arguments
   result.width = 1280
   result.height = 720
+  result.msaa = true
+  result.fullscreen = false
   return result
 }
 
@@ -450,9 +507,18 @@ load_default_arguments :: proc() -> Arguments
 game_init_window :: proc()
 {
   args := load_default_arguments()
-  parse_arguments(&args)
-  rl.SetConfigFlags({.MSAA_4X_HINT, .WINDOW_RESIZABLE})
-  rl.InitWindow(i32(args.width), 720, "Shooter Game")
+  flags := load_default_flags()
+  parse_arguments(&args, &flags)
+  rl.SetConfigFlags(flags)
+  rl.InitWindow(i32(args.width), i32(args.height), "Shooter Game")
+
+  if args.fullscreen {
+    width := rl.GetMonitorWidth(rl.GetCurrentMonitor())
+    height := rl.GetMonitorHeight(rl.GetCurrentMonitor())
+    rl.SetWindowSize(width, height)
+    rl.ToggleFullscreen()
+  }
+  
   rl.SetTargetFPS(60)
   rl.SetExitKey(nil)
   rl.HideCursor()
@@ -473,6 +539,14 @@ game_init :: proc()
 
   player_size = {80, 80}
   player_pos = {screen_width / 2, screen_height / 2}
+
+  player_gun = Gun {
+    type = .Auto,
+    bullet_speed = 1500,
+    rpm = 150,
+    spread = 0.0
+  }
+
   horizontal_padding = f32(0.4)
   vertical_padding = f32(0.3)
   scroll_bounds_a = {screen_width * horizontal_padding, screen_height * vertical_padding}
