@@ -31,9 +31,21 @@ Gun :: struct
   rpm             : int,
   spread          : f64,
   bullet_speed    : f64,
-
+  name            : string,
   last_shoot_time : f64,
   next_shoot_time : f64,
+}
+
+GunTable := map[string]Gun {
+  "M1911" = Gun { type = .SemiAuto, rpm = 900, bullet_speed = 1000, name = "M1911" }, // M1911
+  "AK-47" = Gun { type = .Auto,     rpm = 700, bullet_speed = 1400, name = "AK-47" }, // Ak-47
+}
+
+DroppedGun :: struct
+{
+  position: [2]f32,
+  rotation: f32,
+  gun_data: Gun,
 }
 
 Bullet :: struct
@@ -63,6 +75,25 @@ Arguments :: struct
   fullscreen    : bool,
 }
 
+GameFontSizes :: enum
+{
+  Size14,
+  Size16,
+  Size18,
+  Size20,
+  Size22,
+  Size24,
+  Size30,
+  Size34,
+
+  TotalSizes
+}
+
+GameFonts :: struct
+{
+  inconsolata: [GameFontSizes.TotalSizes]rl.Font
+}
+
 GameMemory :: struct
 {
 // TODO Default Values
@@ -70,6 +101,7 @@ GameMemory :: struct
   player_size                : [2]f32,
   player_rotation            : f32,
   player_health              : f32, // default = 100
+  player_has_gun             : bool,
   player_gun                 : Gun,
   delta_time                 : f32,
   dash_timestamp             : f64,
@@ -83,7 +115,7 @@ GameMemory :: struct
   screen_width               : f32,
   screen_height              : f32,
   game_camera                : rl.Camera2D,
-  mouse_position             : rl.Vector2,
+  mouse_position_world             : rl.Vector2,
   // camera
   camera_state               : int,
   target_zoom                : f32,
@@ -99,11 +131,51 @@ GameMemory :: struct
   hide_cursor                : bool,
   cursor_texture             : rl.Texture2D,
 
+  game_fonts                 : GameFonts,
+
   bullets                    : [dynamic]Bullet,
   enemies                    : [dynamic]Enemy,
+  dropped_guns               : [dynamic]DroppedGun,
 }
 
 g_mem: ^GameMemory
+
+player_drop_gun :: proc()
+{
+  using g_mem
+  // Do this vector computation in the beginning of every frame
+  vector_direction := rl.Vector2Normalize(mouse_position_world - player_pos)
+  drop_position := player_pos + (vector_direction * 100)
+  player_has_gun = false
+  dropped_gun := DroppedGun {
+    position = drop_position,
+    rotation = player_rotation,
+    gun_data = player_gun
+  }
+  append(&dropped_guns, dropped_gun)
+  player_gun = Gun{}
+}
+
+player_pickup_gun :: proc(gun: DroppedGun)
+{
+  using g_mem
+  player_gun = gun.gun_data
+  player_has_gun = true 
+}
+
+check_dropped_gun_pickups :: proc()
+{
+  using g_mem
+
+  if player_has_gun do return
+
+  for gun, index in dropped_guns {
+    if rl.CheckCollisionCircles(gun.position, 25.0 / 2, player_pos, player_default_size / 2) {
+      player_pickup_gun(gun)
+      unordered_remove(&dropped_guns, index)
+    }
+  }
+}
 
 move_player :: proc()
 {
@@ -135,6 +207,12 @@ move_player :: proc()
   }
 
   player_pos += player_direction
+
+  check_dropped_gun_pickups()
+  
+  if player_has_gun && rl.IsKeyPressed(.G) {
+    player_drop_gun()
+  }
 }
 
 
@@ -197,9 +275,22 @@ draw_enemies :: proc()
   }
 }
 
+draw_dropped_guns :: proc()
+{
+  using g_mem
+  for gun, index in dropped_guns {
+    color := rl.PURPLE
+    if gun.gun_data.type == .Auto do color = rl.BLUE
+    rl.DrawRectanglePro(rl.Rectangle{gun.position.x, gun.position.y, 25, 25}, {25/2,25/2}, gun.rotation, color)
+    rl.DrawCircle(auto_cast gun.position.x, auto_cast gun.position.y, 25/2, rl.Color{90, 255, 90, 170})
+  }
+}
+
 simulate_player_gun :: proc(mouse_direction: [2]f32)
 {
   using g_mem
+
+  if !player_has_gun do return
 
   // TODO: better logic for dispatch
   func := rl.IsMouseButtonDown
@@ -217,11 +308,12 @@ simulate_player_gun :: proc(mouse_direction: [2]f32)
     gun := &player_gun
     inv_rpm := f64(60.0) / f64(gun.rpm)
 
+    // TODO: need to handle burst mechanics
     if rl.GetTime() > gun.next_shoot_time {
       x := player_pos.x + (mouse_direction.x * ((player_default_size / 2) + 15))
       y := player_pos.y + (mouse_direction.y * ((player_default_size / 2) + 15))
       spawn_bullet(x, y, player_rotation, {mouse_direction.x, mouse_direction.y}, gun.bullet_speed)
-      fmt.printfln("gun.next_shoot_time = {0} + {1} = {2}", rl.GetTime(), inv_rpm, rl.GetTime() + inv_rpm)
+      // fmt.printfln("gun.next_shoot_time = {0} + {1} = {2}", rl.GetTime(), inv_rpm, rl.GetTime() + inv_rpm)
       gun.next_shoot_time = rl.GetTime() + inv_rpm
     }
   }
@@ -239,7 +331,7 @@ spawn_bullet :: proc(x, y, rotation: f32, direction: [2]f32, speed: f64)
     type = 1
   }
   append(&bullets, bullet_to_spawn)
-  fmt.printfln("Spawning bullet \t bullet size: {0} \t container: %p", len(bullets), &bullets) 
+  // fmt.printfln("Spawning bullet \t bullet size: {0} \t container: %p", len(bullets), &bullets) 
 }
 
 simulate_bullets :: proc()
@@ -249,7 +341,7 @@ simulate_bullets :: proc()
   for &bullet, index in bullets {
     // maybe needs two loops so it doesn't get any inconsistencies.
     if bullet.time_to_live + bullet.spawned_in < rl.GetTime() {
-      fmt.printfln("Removing bullet {0} \t bullet size: {1} \t container: %p", index, len(bullets), &bullets) 
+      // fmt.printfln("Removing bullet {0} \t bullet size: {1} \t container: %p", index, len(bullets), &bullets) 
       unordered_remove(&bullets, index)
       continue
     }
@@ -325,7 +417,7 @@ update_and_render :: proc() -> bool
   }
   delta_time = rl.GetFrameTime()
 
-  player_rotation = math.atan2(player_pos.x - mouse_position.x, mouse_position.y - player_pos.y) 
+  player_rotation = math.atan2(player_pos.x - mouse_position_world.x, mouse_position_world.y - player_pos.y) 
   player_rotation = math.to_degrees(player_rotation)
 
   if rl.IsKeyPressed(.SIX) do camera_state = 0
@@ -348,11 +440,11 @@ update_and_render :: proc() -> bool
 
   target_zoom = rl.Clamp(target_zoom, 0.1, 10)
   game_camera.zoom = rl.Lerp(game_camera.zoom, target_zoom, 0.1)
-  mouse_position = rl.GetScreenToWorld2D(rl.GetMousePosition(), game_camera)
+  mouse_position_world = rl.GetScreenToWorld2D(rl.GetMousePosition(), game_camera)
 
   check_collision()
 
-  mouse_direction: rl.Vector2 = mouse_position - player_pos
+  mouse_direction: rl.Vector2 = mouse_position_world - player_pos
   mouse_direction = rl.Vector2Normalize(mouse_direction)
 
   move_player()
@@ -366,8 +458,10 @@ update_and_render :: proc() -> bool
   rl.BeginMode2D(game_camera)
 
   rl.DrawTextureEx(background, rl.Vector2{-1000, -1000}, 0, 4, rl.WHITE)
+
+  draw_dropped_guns()
   
-  rl.DrawLineV(rl.Vector2{ player_pos.x, player_pos.y }, mouse_position, rl.RED)
+  rl.DrawLineV(rl.Vector2{ player_pos.x, player_pos.y }, mouse_position_world, rl.RED)
 
   rl.DrawRectanglePro(rl.Rectangle{ player_pos.x, player_pos.y, player_size.x, player_size.y }, rl.Vector2{ player_size.x / 2, player_size.y / 2 }, player_rotation, rl.RED)
   // drawing cooldown bar
@@ -430,7 +524,7 @@ update_and_render :: proc() -> bool
   current_y += 22
   draw_shadowed_text(rl.TextFormat("Camera zoom: %.3f", game_camera.zoom), 10, current_y, 20, rl.LIGHTGRAY)
   current_y += 22
-  draw_shadowed_text(rl.TextFormat("MousePosition: %.3f, %.3f", mouse_position.x, mouse_position.y), 10, current_y, 20, rl.LIGHTGRAY)
+  draw_shadowed_text(rl.TextFormat("MousePosition: %.3f, %.3f", mouse_position_world.x, mouse_position_world.y), 10, current_y, 20, rl.LIGHTGRAY)
   current_y += 22
   draw_shadowed_text(rl.TextFormat("Rotation: %.3f", player_rotation), 10, current_y, 20, rl.LIGHTGRAY)
   current_y += 22
@@ -447,18 +541,33 @@ update_and_render :: proc() -> bool
   draw_shadowed_text(rl.TextFormat("Gun next: %f", player_gun.next_shoot_time), 10, current_y, 20, rl.LIGHTGRAY)
   current_y += 22
 
-  screen_mouse_position := rl.GetMousePosition()
-  rl.DrawTexturePro(cursor_texture, rl.Rectangle{ 0, 0, auto_cast cursor_texture.width, auto_cast cursor_texture.height }, { screen_mouse_position.x, screen_mouse_position.y, auto_cast cursor_texture.width * 2, auto_cast cursor_texture.height * 2 }, { auto_cast cursor_texture.width, auto_cast cursor_texture.height}, f32(0.0),  rl.WHITE)
+
+  screen_mouse_position_world := rl.GetMousePosition()
+  rl.DrawTexturePro(cursor_texture, rl.Rectangle{ 0, 0, auto_cast cursor_texture.width, auto_cast cursor_texture.height }, { screen_mouse_position_world.x, screen_mouse_position_world.y, auto_cast cursor_texture.width * 2, auto_cast cursor_texture.height * 2 }, { auto_cast cursor_texture.width, auto_cast cursor_texture.height}, f32(0.0),  rl.WHITE)
+
+  font_size := 30.0
+  rl.DrawTextEx(game_fonts.inconsolata[GameFontSizes.Size30], rl.TextFormat("Current Weapon: %s", player_gun.name), rl.Vector2{10, auto_cast rl.GetScreenHeight() - auto_cast (font_size + 4.0)}, auto_cast font_size, 0, rl.BLACK)
 
   rl.EndDrawing()
 
   return true
 }
 
-parse_argument :: proc($T: typeid, argument: string) -> (T, bool)
+parse_argument_int :: proc($T: typeid, argument: string) -> (T, bool)
   where intrinsics.type_is_integer(T)
 {
   return strconv.parse_int(argument)
+}
+
+parse_argument_float :: proc($T: typeid, argument: string) -> (T, bool)
+  where intrinsics.type_is_float(T)
+{
+  return strconv.parse_f32(argument)
+}
+
+parse_argument :: proc {
+  parse_argument_int,
+  parse_argument_float,
 }
 
 parse_arguments :: proc(arguments: ^Arguments, flags: ^rl.ConfigFlags)
@@ -534,18 +643,23 @@ game_init :: proc()
   game_camera.zoom = 0.1
   target_zoom = 1.0
 
+  game_fonts.inconsolata[GameFontSizes.Size14] = rl.LoadFontEx("assets/fonts/inconsolata.ttf", 14, nil, 0)
+  game_fonts.inconsolata[GameFontSizes.Size16] = rl.LoadFontEx("assets/fonts/inconsolata.ttf", 16, nil, 0)
+  game_fonts.inconsolata[GameFontSizes.Size18] = rl.LoadFontEx("assets/fonts/inconsolata.ttf", 18, nil, 0)
+  game_fonts.inconsolata[GameFontSizes.Size20] = rl.LoadFontEx("assets/fonts/inconsolata.ttf", 20, nil, 0)
+  game_fonts.inconsolata[GameFontSizes.Size22] = rl.LoadFontEx("assets/fonts/inconsolata.ttf", 22, nil, 0)
+  game_fonts.inconsolata[GameFontSizes.Size24] = rl.LoadFontEx("assets/fonts/inconsolata.ttf", 24, nil, 0)
+  game_fonts.inconsolata[GameFontSizes.Size30] = rl.LoadFontEx("assets/fonts/inconsolata.ttf", 30, nil, 0)
+  game_fonts.inconsolata[GameFontSizes.Size34] = rl.LoadFontEx("assets/fonts/inconsolata.ttf", 34, nil, 0)
+
   reserve(&bullets, 128)
   reserve(&enemies, 128)
 
   player_size = {80, 80}
   player_pos = {screen_width / 2, screen_height / 2}
 
-  player_gun = Gun {
-    type = .Auto,
-    bullet_speed = 1500,
-    rpm = 150,
-    spread = 0.0
-  }
+  player_gun = GunTable["M1911"]
+  player_has_gun = true
 
   horizontal_padding = f32(0.4)
   vertical_padding = f32(0.3)
@@ -561,6 +675,21 @@ game_init :: proc()
     y := rand.float32_range(0, screen_height)
     //spawn_enemy(x, y, 100, 100)
     fmt.printfln("Spawning enemy {0}", i)
+  }
+  for i in 0..<4 {
+    r := int(rand.float32_range(0, 2))
+    choice: string
+    if r == 0 do choice = "M1911"
+    if r == 1 do choice = "AK-47"
+    fmt.printfln("{0} ----- Spawning {1}", r, choice)
+    x := rand.float32_range(-1000.0, 1000.0)
+    y := rand.float32_range(-1000.0, 1000.0)
+    rotation := rand.float32_range(0, 270)
+    dropped_gun := DroppedGun {
+      position = {x, y}, rotation = rotation,
+      gun_data = GunTable[choice]
+    } 
+    append(&dropped_guns, dropped_gun) 
   }
 }
 
