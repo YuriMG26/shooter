@@ -43,7 +43,7 @@ Gun :: struct
 GunTable := map[string]Gun {
   "M1911"     = Gun { bullets_per_shot = 1, type = .SemiAuto,   rpm = 900, bullet_speed = 4000, name = "M1911", mag_capacity = 7, bullets_in_mag = 7, bullet_damage = 50  }, // M1911
   "AK-47"     = Gun { bullets_per_shot = 1, type = .Auto,       rpm = 300, bullet_speed = 4500, name = "AK-47", mag_capacity = 31, bullets_in_mag = 31, bullet_damage = 20, spread = 3  }, // Ak-47
-  "SPAS-12"   = Gun { bullets_per_shot = 4, type = .Shotgun,    rpm = 200, bullet_speed = 5000, name = "SPAS-12", mag_capacity = 31, bullets_in_mag = 31, bullet_damage = 5, spread = 15,  }, // Ak-47
+  "SPAS-12"   = Gun { bullets_per_shot = 4, type = .Shotgun,    rpm = 200, bullet_speed = 5000, name = "SPAS-12", mag_capacity = 6, bullets_in_mag = 6, bullet_damage = 5, spread = 15,  }, // Ak-47
 }
 
 DroppedGun :: struct
@@ -68,6 +68,7 @@ Enemy :: struct
 {
   x, y           : f32,
   starting_health: f32,
+  rotation       : f32,
   health         : f32,
   speed          : f32,
   starting_speed : f32,
@@ -104,11 +105,14 @@ GameMemory :: struct
 {
 // TODO Default Values
   player_pos                 : [2]f32,
+  player_new_pos             : [2]f32,
   player_size                : [2]f32,
   player_rotation            : f32,
   player_health              : f32, // default = 100
   player_has_gun             : bool,
+  player_collide             : bool,
   player_gun                 : Gun,
+  player_colliding_wall      : int,
   delta_time                 : f32,
   dash_timestamp             : f64,
   dash_cooldown              : f32,
@@ -139,6 +143,7 @@ GameMemory :: struct
 
   game_fonts                 : GameFonts,
 
+  walls                      : [dynamic]rl.Rectangle,
   bullets                    : [dynamic]Bullet,
   enemies                    : [dynamic]Enemy,
   dropped_guns               : [dynamic]DroppedGun,
@@ -212,7 +217,7 @@ move_player :: proc()
     dash_vector = player_dash_target - dash_begin_position
   }
 
-  player_pos += player_direction
+  player_new_pos = player_pos + player_direction
 
   check_dropped_gun_pickups()
   
@@ -220,7 +225,6 @@ move_player :: proc()
     player_drop_gun()
   }
 }
-
 
 window_is_resized :: proc()
 {
@@ -230,6 +234,12 @@ window_is_resized :: proc()
   game_camera.offset = rl.Vector2{ screen_width / 2, screen_height / 2 }
 }
 
+init_default_walls :: proc()
+{
+  using g_mem
+  append(&walls, rl.Rectangle{200, 200, 500, 50})
+  append(&walls, rl.Rectangle{700, 200, 50, 200})
+}
 
 spawn_enemy_random :: proc()
 {
@@ -237,11 +247,7 @@ spawn_enemy_random :: proc()
   x := rand.float32_range(0, screen_width)
   y := rand.float32_range(0, screen_height)
   speed := rand.float32_range(0, 200)
-  enemy_to_spawn := Enemy {
-    x = x, y = y, health = 100, speed = speed,
-    starting_health = 100, starting_speed = speed,
-  }
-  append(&enemies, enemy_to_spawn)
+  spawn_enemy(x, y, 100, speed)
 }
 
 spawn_enemy :: proc(x, y, health, speed: f32)
@@ -250,6 +256,7 @@ spawn_enemy :: proc(x, y, health, speed: f32)
   enemy_to_spawn := Enemy {
     x = x, y = y, health = health, speed = speed,
     starting_health = health, starting_speed = speed,
+    rotation = rand.float32_range(0, 360),
   }
   append(&enemies, enemy_to_spawn)
 }
@@ -273,11 +280,37 @@ draw_enemies :: proc()
   enemy_max_health :: 100
   for enemy, index in enemies {
     // TODO: rotation is being calculated here but should be doing this in simulate_enemies()
-    rotation := math.to_degrees(math.atan2(enemy.x - player_pos.x, player_pos.y - enemy.y))
+    // rotation := math.to_degrees(math.atan2(enemy.x - player_pos.x, player_pos.y - enemy.y))
     color := default_color
     health_factor := enemy.health / enemy_max_health
     color.g = u8(255 * health_factor)
-    rl.DrawRectanglePro(rl.Rectangle{enemy.x, enemy.y, default_enemy_size, default_enemy_size}, rl.Vector2{default_enemy_size / 2, default_enemy_size / 2}, rotation, color)
+    rl.DrawRectanglePro(rl.Rectangle{enemy.x, enemy.y, default_enemy_size, default_enemy_size}, rl.Vector2{default_enemy_size / 2, default_enemy_size / 2}, enemy.rotation, color)
+  }
+}
+
+draw_walls :: proc()
+{
+  using g_mem
+  for wall, index in walls {
+    rl.DrawRectangleRec(wall, rl.RED)
+  }
+}
+
+simulate_walls :: proc()
+{
+  using g_mem
+  player_collide = false
+  player_colliding_wall = -1
+  for wall, wall_index in walls {
+    if player_collide == false && rl.CheckCollisionCircleRec(player_new_pos, player_size.x / 2.0, wall) {
+      player_colliding_wall = wall_index 
+      player_collide = true
+    }
+    for bullet, bullet_index in bullets {
+      if rl.CheckCollisionCircleRec(rl.Vector2{bullet.x, bullet.y}, default_bullet_size/2, wall) {
+        unordered_remove(&bullets, bullet_index)
+      }
+    }
   }
 }
 
@@ -410,6 +443,8 @@ update_and_render :: proc() -> bool
 {
   using g_mem
 
+  player_collide = false
+
   if rl.IsKeyPressed(.SCROLL_LOCK) {
     if hide_cursor {
       hide_cursor = false
@@ -464,13 +499,15 @@ update_and_render :: proc() -> bool
 
   simulate_player_gun(mouse_direction)
 
+  simulate_walls()
+
   if player_health <= 0 {
     return false
   }
 
   rl.BeginMode2D(game_camera)
 
-  rl.DrawTextureEx(background, rl.Vector2{-1000, -1000}, 0, 4, rl.WHITE)
+  // rl.DrawTextureEx(background, rl.Vector2{-1000, -1000}, 0, 4, rl.WHITE)
 
   draw_dropped_guns()
   
@@ -488,6 +525,7 @@ update_and_render :: proc() -> bool
 
   draw_bullets()
   draw_enemies()
+  draw_walls()
 
   rl.EndMode2D()
 
@@ -551,7 +589,7 @@ update_and_render :: proc() -> bool
   draw_shadowed_text(rl.TextFormat("Current Time: %f", rl.GetTime()), 10, current_y, 20, rl.LIGHTGRAY)
   current_y += 22
 
-  draw_shadowed_text(rl.TextFormat("Gun next: %f", player_gun.next_shoot_time), 10, current_y, 20, rl.LIGHTGRAY)
+  draw_shadowed_text(rl.TextFormat("Colliding wall: %d", player_colliding_wall), 10, current_y, 20, rl.LIGHTGRAY)
   current_y += 22
 
 
@@ -564,6 +602,10 @@ update_and_render :: proc() -> bool
   rl.DrawTextEx(game_fonts.inconsolata[GameFontSizes.Size30], rl.TextFormat("Current Weapon: %s (%d/%d)", player_gun.name, player_gun.bullets_in_mag, player_gun.mag_capacity), rl.Vector2{10, auto_cast rl.GetScreenHeight() - auto_cast (font_size + 4.0)}, auto_cast font_size, 0, rl.BLACK)
 
   rl.EndDrawing()
+
+  if !player_collide {
+    player_pos = player_new_pos
+  }
 
   return true
 }
@@ -673,8 +715,10 @@ game_init :: proc()
   reserve(&bullets, 128)
   reserve(&enemies, 128)
 
+  player_colliding_wall = -1
   player_size = {80, 80}
   player_pos = {screen_width / 2, screen_height / 2}
+  player_collide = false
 
   player_gun = GunTable["M1911"]
   player_has_gun = true
@@ -696,6 +740,8 @@ game_init :: proc()
     //spawn_enemy(x, y, 100, 100)
     fmt.printfln("Spawning enemy {0}", i)
   }
+  
+  init_default_walls()
   for i in 0..<12 {
     r := int(rand.float32_range(0, 3))
     choice: string
@@ -703,8 +749,19 @@ game_init :: proc()
     if r == 1 do choice = "AK-47"
     if r == 2 do choice = "SPAS-12"
     fmt.printfln("{0} ----- Spawning {1}", r, choice)
-    x := rand.float32_range(-1000.0, 1000.0)
-    y := rand.float32_range(-1000.0, 1000.0)
+
+    x, y: f32
+
+    for wall in walls {
+      for {
+        x = rand.float32_range(-1000.0, 1000.0)
+        y = rand.float32_range(-1000.0, 1000.0)
+        if !rl.CheckCollisionCircleRec(rl.Vector2{x, y}, 12.5, wall) {
+          break;
+        }
+      }
+    }
+
     rotation := rand.float32_range(0, 270)
     dropped_gun := DroppedGun {
       position = {x, y}, rotation = rotation,
