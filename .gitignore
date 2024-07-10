@@ -4,5 +4,6 @@
 *.obj
 *.lib
 *.exp
+*.zip
 game.dll
 game_*.dll
