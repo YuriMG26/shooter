@@ -42,8 +42,8 @@ Gun :: struct
 
 GunTable := map[string]Gun {
   "M1911"     = Gun { bullets_per_shot = 1, type = .SemiAuto,   rpm = 900, bullet_speed = 4000, name = "M1911", mag_capacity = 7, bullets_in_mag = 7, bullet_damage = 50  }, // M1911
-  "AK-47"     = Gun { bullets_per_shot = 1, type = .Auto,       rpm = 300, bullet_speed = 4500, name = "AK-47", mag_capacity = 31, bullets_in_mag = 31, bullet_damage = 20, spread = 3  }, // Ak-47
-  "SPAS-12"   = Gun { bullets_per_shot = 4, type = .Shotgun,    rpm = 200, bullet_speed = 5000, name = "SPAS-12", mag_capacity = 6, bullets_in_mag = 6, bullet_damage = 5, spread = 15,  }, // Ak-47
+  "AK-47"     = Gun { bullets_per_shot = 1, type = .Auto,       rpm = 300, bullet_speed = 4500, name = "AK-47", mag_capacity = 31, bullets_in_mag = 31, bullet_damage = 20, spread = 3  }, // AK-47
+  "SPAS-12"   = Gun { bullets_per_shot = 4, type = .Shotgun,    rpm = 200, bullet_speed = 5000, name = "SPAS-12", mag_capacity = 6, bullets_in_mag = 6, bullet_damage = 5, spread = 15,  }, // SPAS-12
 }
 
 DroppedGun :: struct
@@ -96,6 +96,12 @@ GameFontSizes :: enum
   TotalSizes
 }
 
+Circle :: struct
+{
+  x, y   : f32,
+  radius : f32,
+}
+
 GameFonts :: struct
 {
   inconsolata: [GameFontSizes.TotalSizes]rl.Font
@@ -104,6 +110,7 @@ GameFonts :: struct
 GameMemory :: struct
 {
 // TODO Default Values
+  player_collider            : Circle,
   player_pos                 : [2]f32,
   player_new_pos             : [2]f32,
   player_size                : [2]f32,
@@ -147,6 +154,7 @@ GameMemory :: struct
   bullets                    : [dynamic]Bullet,
   enemies                    : [dynamic]Enemy,
   dropped_guns               : [dynamic]DroppedGun,
+  circle_colliders                  : [dynamic]Circle
 }
 
 g_mem: ^GameMemory
@@ -218,6 +226,7 @@ move_player :: proc()
   }
 
   player_new_pos = player_pos + player_direction
+  player_collider = Circle{x = player_new_pos.x, y = player_new_pos.y, radius = player_size.x / 2.0}
 
   check_dropped_gun_pickups()
   
@@ -261,15 +270,21 @@ spawn_enemy :: proc(x, y, health, speed: f32)
   append(&enemies, enemy_to_spawn)
 }
 
+simulate_enemy :: #force_inline proc(enemy: ^Enemy, index: int)
+{
+  using g_mem
+  if enemy.health <= enemy.starting_health / 2 do enemy.speed = enemy.starting_speed / 2
+  if enemy.health <= 0 do unordered_remove(&enemies, index)
+  // direction := rl.Vector2Normalize(rl.Vector2{player_pos.x - enemy.x, player_pos.y - enemy.y})
+  // enemy.x += direction.x * delta_time * enemy.speed
+  // enemy.y += direction.y * delta_time * enemy.speed
+}
+
 simulate_enemies :: proc()
 {
   using g_mem
   for &enemy, index in enemies {
-    if enemy.health <= enemy.starting_health / 2 do enemy.speed = enemy.starting_speed / 2
-    if enemy.health <= 0 do unordered_remove(&enemies, index)
-    direction := rl.Vector2Normalize(rl.Vector2{player_pos.x - enemy.x, player_pos.y - enemy.y})
-    enemy.x += direction.x * delta_time * enemy.speed
-    enemy.y += direction.y * delta_time * enemy.speed
+    simulate_enemy(&enemy, index)
   }
 }
 
@@ -499,13 +514,13 @@ update_and_render :: proc() -> bool
 
   simulate_player_gun(mouse_direction)
 
-  simulate_walls()
-
   if player_health <= 0 {
     return false
   }
 
   rl.BeginMode2D(game_camera)
+
+  simulate_walls()
 
   // rl.DrawTextureEx(background, rl.Vector2{-1000, -1000}, 0, 4, rl.WHITE)
 
@@ -526,6 +541,8 @@ update_and_render :: proc() -> bool
   draw_bullets()
   draw_enemies()
   draw_walls()
+
+  rl.DrawCircle(auto_cast player_collider.x, auto_cast player_collider.y, player_collider.radius, rl.Color{50, 255, 50, 180})
 
   rl.EndMode2D()
 
