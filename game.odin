@@ -10,6 +10,8 @@ import      "core:math/linalg"
 import      "core:log"
 import      "core:os"
 
+Point :: [2]f32
+Rect  :: rl.Rectangle
 FLAT_GREEN :: rl.Color { 0xAC, 0xFB, 0xC5, 0xFF }
 
 // global constants
@@ -102,6 +104,11 @@ Circle :: struct
   radius : f32,
 }
 
+AABB :: struct
+{
+  min, max: Point
+}
+
 GameFonts :: struct
 {
   inconsolata: [GameFontSizes.TotalSizes]rl.Font
@@ -118,6 +125,7 @@ GameMemory :: struct
   player_health              : f32, // default = 100
   player_has_gun             : bool,
   player_collide             : bool,
+  player_dashing             : bool,
   player_gun                 : Gun,
   player_colliding_wall      : int,
   delta_time                 : f32,
@@ -206,6 +214,7 @@ move_player :: proc()
     if dash_duration + dash_timestamp > rl.GetTime() {
       player_direction += dash_vector * (rl.GetFrameTime() / dash_duration)
     }
+    if player_dashing && dash_duration + dash_timestamp < rl.GetTime() do player_dashing = false
   }
 
   if rl.IsKeyDown(.W) do player_direction.y -= 600 * delta_time
@@ -220,12 +229,29 @@ move_player :: proc()
     player_dash_target = player_pos + normalized_player_direction * 400
     dash_timestamp = rl.GetTime()
     is_dash_cooldown = true 
+    player_dashing = true
     dash_cooldown = 3.0
     dash_begin_position = player_pos
     dash_vector = player_dash_target - dash_begin_position
   }
 
-  player_new_pos = player_pos + player_direction
+  if player_dashing { 
+    player_new_pos = player_pos
+    player_physics_steps :: 4
+    player_direction = player_direction / player_physics_steps
+    for i in 0..< player_physics_steps {
+      player_new_pos = player_new_pos + player_direction
+      for wall, wall_index in walls {
+        collide, normal, depth := intersect_circle_rec(player_new_pos, player_size.x / 2.0, wall)
+        if collide {
+          player_colliding_wall = wall_index 
+          move(&player_new_pos, -normal * depth)
+        }
+      }
+    }
+  }
+  else do player_new_pos = player_pos + player_direction
+
   player_collider = Circle{x = player_new_pos.x, y = player_new_pos.y, radius = player_size.x / 2.0}
 
   check_dropped_gun_pickups()
@@ -275,9 +301,9 @@ simulate_enemy :: #force_inline proc(enemy: ^Enemy, index: int)
   using g_mem
   if enemy.health <= enemy.starting_health / 2 do enemy.speed = enemy.starting_speed / 2
   if enemy.health <= 0 do unordered_remove(&enemies, index)
-  // direction := rl.Vector2Normalize(rl.Vector2{player_pos.x - enemy.x, player_pos.y - enemy.y})
-  // enemy.x += direction.x * delta_time * enemy.speed
-  // enemy.y += direction.y * delta_time * enemy.speed
+  direction := rl.Vector2Normalize(rl.Vector2{player_pos.x - enemy.x, player_pos.y - enemy.y})
+  enemy.x += direction.x * delta_time * enemy.speed
+  enemy.y += direction.y * delta_time * enemy.speed
 }
 
 simulate_enemies :: proc()
@@ -303,6 +329,73 @@ draw_enemies :: proc()
   }
 }
 
+// TODO: move from here
+points_from_rectangle :: proc(rect: rl.Rectangle) -> [4]Point // clockwise
+{
+  return {
+    {rect.x, rect.y},
+    {rect.x + rect.width, rect.y},
+    {rect.x + rect.width, rect.y + rect.height},
+    {rect.x, rect.y + rect.height}
+  }
+}
+
+// THIS IS EXPENSIVE
+get_closest_point :: proc(a: Point, points: []Point) -> Point
+{
+  min_distance : f32 = 9999999 // INT_MAX ?
+  min_point: Point
+  for point in points {
+    distance := rl.Vector2Distance(point, a)
+    if distance < min_distance {
+      min_distance = distance
+      min_point = point
+    }
+  }
+  return min_point
+}
+
+aabb_from_rect :: #force_inline proc(rect: Rect) -> AABB
+{
+  return {
+    {rect.x, rect.y},
+    {rect.x + rect.width, rect.y + rect.height}
+  }
+}
+
+get_closest_point_rect :: proc(aabb: AABB, point: Point) -> (result: Point)
+{
+  result = Point(0)
+  for i in 0..<2 {
+    v := point[i] 
+    if v < aabb.min[i] do v = aabb.min[i]
+    if v > aabb.max[i] do v = aabb.max[i]
+    result[i] = v
+  }
+  return
+}
+
+intersect_circle_rec :: proc(center: [2]f32, radius: f32, rect: Rect) -> (collide: bool, normal: rl.Vector2, depth: f32)
+{
+  collide = false
+  normal = rl.Vector2(0)
+  depth = 0.0
+
+  aabb := aabb_from_rect(rect)
+  closest_point = get_closest_point_rect(aabb, center)
+
+  distance := rl.Vector2Distance(closest_point, center)
+  
+  if distance >= radius {
+    return
+  }
+  collide = true
+  normal = rl.Vector2Normalize(closest_point - center)
+  depth = radius - distance
+
+  return
+}
+
 draw_walls :: proc()
 {
   using g_mem
@@ -311,19 +404,36 @@ draw_walls :: proc()
   }
 }
 
+closest_point: Point
+
+move :: #force_inline proc(p: ^rl.Vector2, v: rl.Vector2)
+{
+  p^ += v
+}
+
 simulate_walls :: proc()
 {
   using g_mem
   player_collide = false
   player_colliding_wall = -1
   for wall, wall_index in walls {
-    if player_collide == false && rl.CheckCollisionCircleRec(player_new_pos, player_size.x / 2.0, wall) {
-      player_colliding_wall = wall_index 
-      player_collide = true
+    // TODO: better check collisions in other places?
+    // Player wall collision
+    // NOTE: if the player is dashing, the collision is being handled on move_player() for now, but this
+    // will change when I make a better collision system with triggers maybe
+    if !player_dashing {
+      collide, normal, depth := intersect_circle_rec(player_new_pos, player_size.x / 2.0, wall)
+      if collide {
+        player_colliding_wall = wall_index 
+        move(&player_new_pos, -normal * depth)
+      }
     }
-    for bullet, bullet_index in bullets {
-      if rl.CheckCollisionCircleRec(rl.Vector2{bullet.x, bullet.y}, default_bullet_size/2, wall) {
-        unordered_remove(&bullets, bullet_index)
+    for &enemy in enemies {
+      collide, normal, depth := intersect_circle_rec({enemy.x, enemy.y}, default_enemy_size / 2.0, wall)
+      if collide {
+        v := - normal * depth
+        enemy.x += v.x
+        enemy.y += v.y
       }
     }
   }
@@ -406,8 +516,22 @@ simulate_bullets :: proc()
       unordered_remove(&bullets, index)
       continue
     }
-    bullet.x += bullet.direction.x * delta_time * auto_cast bullet.speed
-    bullet.y += bullet.direction.y * delta_time * auto_cast bullet.speed
+
+    steps :: 4
+    velocity := (bullet.direction * delta_time * auto_cast bullet.speed) / steps
+    for i in 0..< steps {
+      collided := false
+      bullet.x += velocity.x
+      bullet.y += velocity.y
+    // NOTE: this collision is being handled here so the collision can be handled in a 4 steps per tick manner
+      for wall, wall_index in walls {
+        if rl.CheckCollisionCircleRec(rl.Vector2{bullet.x, bullet.y}, default_bullet_size/2, wall) {
+          collided = true
+          unordered_remove(&bullets, index)
+        }
+      }
+      if collided do break
+    }
   }
 }
 
@@ -543,6 +667,8 @@ update_and_render :: proc() -> bool
   draw_walls()
 
   rl.DrawCircle(auto_cast player_collider.x, auto_cast player_collider.y, player_collider.radius, rl.Color{50, 255, 50, 180})
+
+  rl.DrawRectangleV(closest_point, rl.Vector2{30, 30}, rl.GREEN)
 
   rl.EndMode2D()
 
