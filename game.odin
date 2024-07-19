@@ -74,6 +74,7 @@ Enemy :: struct
   health         : f32,
   speed          : f32,
   starting_speed : f32,
+  direction      : rl.Vector2,
 }
 
 Arguments :: struct
@@ -162,7 +163,6 @@ GameMemory :: struct
   bullets                    : [dynamic]Bullet,
   enemies                    : [dynamic]Enemy,
   dropped_guns               : [dynamic]DroppedGun,
-  circle_colliders                  : [dynamic]Circle
 }
 
 g_mem: ^GameMemory
@@ -271,9 +271,14 @@ window_is_resized :: proc()
 
 init_default_walls :: proc()
 {
+  door_gap :: 200
   using g_mem
-  append(&walls, rl.Rectangle{200, 200, 500, 50})
-  append(&walls, rl.Rectangle{700, 200, 50, 200})
+  append(&walls, rl.Rectangle{0, 200, 2400, 50})
+  append(&walls, rl.Rectangle{1150, 200, 50, 500})
+  append(&walls, rl.Rectangle{1150, 200 + 500 + door_gap, 50, (200 + 1200) - (200 + 500 + door_gap)})
+  append(&walls, rl.Rectangle{0, 200 + 1200, 2400, 50})
+  // append(&walls, rl.Rectangle{700, 200, 50, 200})
+  // append(&walls, rl.Rectangle{700, 200, 50, 200})
 }
 
 spawn_enemy_random :: proc()
@@ -301,9 +306,13 @@ simulate_enemy :: #force_inline proc(enemy: ^Enemy, index: int)
   using g_mem
   if enemy.health <= enemy.starting_health / 2 do enemy.speed = enemy.starting_speed / 2
   if enemy.health <= 0 do unordered_remove(&enemies, index)
-  direction := rl.Vector2Normalize(rl.Vector2{player_pos.x - enemy.x, player_pos.y - enemy.y})
-  enemy.x += direction.x * delta_time * enemy.speed
-  enemy.y += direction.y * delta_time * enemy.speed
+
+  enemy.direction = rl.Vector2{0, 1}
+  enemy.direction = rl.Vector2Rotate(enemy.direction, math.to_radians(enemy.rotation))
+
+  // direction := rl.Vector2Normalize(rl.Vector2{player_pos.x - enemy.x, player_pos.y - enemy.y})
+  // enemy.x += direction.x * delta_time * enemy.speed
+  // enemy.y += direction.y * delta_time * enemy.speed
 }
 
 simulate_enemies :: proc()
@@ -326,6 +335,49 @@ draw_enemies :: proc()
     health_factor := enemy.health / enemy_max_health
     color.g = u8(255 * health_factor)
     rl.DrawRectanglePro(rl.Rectangle{enemy.x, enemy.y, default_enemy_size, default_enemy_size}, rl.Vector2{default_enemy_size / 2, default_enemy_size / 2}, enemy.rotation, color)
+
+    fov :: 90
+    line_size :: 1000
+    left_line := rl.Vector2Rotate(enemy.direction, math.to_radians(f32(-fov/2)))
+    right_line := rl.Vector2Rotate(enemy.direction, math.to_radians(f32(fov/2)))
+    // rl.DrawLineV({enemy.x, enemy.y}, {enemy.x + enemy.direction.x * 50, enemy.y + enemy.direction.y * 50}, rl.RED)
+
+    line_color := rl.RED
+    
+    to_player_vector_not_normalized := player_pos - rl.Vector2{enemy.x, enemy.y}
+    to_player_vector_normalized := rl.Vector2Normalize(to_player_vector_not_normalized)
+
+    dot := rl.Vector2DotProduct(enemy.direction, to_player_vector_normalized)
+    a := enemy.direction
+    b := to_player_vector_normalized
+    angle := (a.x * b.x + a.y * b.y) / (math.sqrt((a.x * a.x) + (a.y * a.y)) * math.sqrt((b.x * b.x) + (b.y * b.y)))
+    angle = math.to_degrees(math.acos(angle))
+
+    rl.DrawText(rl.TextFormat("dot = %f", angle), auto_cast enemy.x - 100, auto_cast enemy.y - 100, 20, rl.BLACK)
+
+
+    if angle < fov / 2 && rl.Vector2Distance({enemy.x, enemy.y}, player_new_pos) < 1500 {
+      
+      // TODO: speed
+      current_y: i32 = auto_cast enemy.y - 100
+      collided_with_wall := false
+      for wall, windex in walls {
+        // raycast
+        collide, tmin, tmax := intersect_ray_rec({enemy.x, enemy.y}, to_player_vector_normalized, wall)
+        if collide {
+          rl.DrawText(rl.TextFormat("collision = %d", windex), auto_cast enemy.x, current_y, 20, rl.BLACK)
+          current_y += 22
+          if tmin < rl.Vector2Length(to_player_vector_not_normalized) {
+            collided_with_wall = true
+            break
+          }
+        }
+      }
+      if collided_with_wall == false do line_color = rl.GREEN
+    }
+
+    rl.DrawLineV({enemy.x, enemy.y}, {enemy.x + left_line.x * line_size, enemy.y + left_line.y * line_size}, line_color)
+    rl.DrawLineV({enemy.x, enemy.y}, {enemy.x + right_line.x * line_size, enemy.y + right_line.y * line_size}, line_color)
   }
 }
 
@@ -373,6 +425,24 @@ get_closest_point_rect :: proc(aabb: AABB, point: Point) -> (result: Point)
     result[i] = v
   }
   return
+}
+
+intersect_ray_rec :: proc(ray_origin, ray_direction: Point, rect: Rect) -> (bool, f32, f32)
+{
+  inv_dir := rl.Vector2{1.0 / ray_direction.x, 1.0 / ray_direction.y}
+
+  t1 := (rect.x - ray_origin.x) * inv_dir.x
+  t2 := ((rect.x + rect.width) - ray_origin.x) *inv_dir.x
+  t3 := (rect.y - ray_origin.y) * inv_dir.y
+  t4 := ((rect.y + rect.height) - ray_origin.y) * inv_dir.y
+
+  tmin := math.max(math.min(t1, t2), math.min(t3, t4))
+  tmax := math.min(math.max(t1, t2), math.max(t3, t4))
+
+  if tmax < 0.0 || tmin > tmax {
+    return false, 0.0, 0.0
+  }
+  return true, tmin, tmax
 }
 
 intersect_circle_rec :: proc(center: [2]f32, radius: f32, rect: Rect) -> (collide: bool, normal: rl.Vector2, depth: f32)
@@ -525,9 +595,10 @@ simulate_bullets :: proc()
       bullet.y += velocity.y
     // NOTE: this collision is being handled here so the collision can be handled in a 4 steps per tick manner
       for wall, wall_index in walls {
-        if rl.CheckCollisionCircleRec(rl.Vector2{bullet.x, bullet.y}, default_bullet_size/2, wall) {
+        if collided == false && rl.CheckCollisionCircleRec(rl.Vector2{bullet.x, bullet.y}, default_bullet_size/2, wall) {
           collided = true
           unordered_remove(&bullets, index)
+          break
         }
       }
       if collided do break
