@@ -9,6 +9,8 @@ import      "core:fmt"
 import      "core:math/linalg"
 import      "core:log"
 import      "core:os"
+import      "core:strings"
+import      "core:c/libc"
 
 Point :: [2]f32
 Rect  :: rl.Rectangle
@@ -377,11 +379,22 @@ draw_enemies :: proc()
     dot := rl.Vector2DotProduct(enemy.direction, to_player_vector_normalized)
     a := enemy.direction
     b := to_player_vector_normalized
-    angle := (a.x * b.x + a.y * b.y) / (math.sqrt((a.x * a.x) + (a.y * a.y)) * math.sqrt((b.x * b.x) + (b.y * b.y)))
+
+    bottom_part := (math.sqrt((a.x * a.x) + (a.y * a.y)) * math.sqrt((b.x * b.x) + (b.y * b.y)))
+    angle := (a.x * b.x + a.y * b.y) / bottom_part
     // TODO: handle NaN, better clamp it to zero
     angle = math.to_degrees(math.acos(angle))
+    if bottom_part == 0 {
+      angle = 0.0
+    } 
 
-    rl.DrawText(rl.TextFormat("dot = %f", angle), auto_cast enemy.x - 100, auto_cast enemy.y - 100, 20, rl.BLACK)
+    // TODO: remove. this is unsafe.
+    str := rl.TextFormat("dot = %f", angle)
+    if libc.strcmp(str, "dot = NaN") == 0 {
+      fmt.println("hmmmm")
+    }
+    
+    rl.DrawText(str, auto_cast enemy.x - 100, auto_cast enemy.y - 100, 20, rl.BLACK)
 
     if angle < fov / 2 && rl.Vector2Distance({enemy.x, enemy.y}, player_new_pos) < 1500 {
       
