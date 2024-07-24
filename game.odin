@@ -380,18 +380,22 @@ draw_enemies :: proc()
     a := enemy.direction
     b := to_player_vector_normalized
 
-    bottom_part := (math.sqrt((a.x * a.x) + (a.y * a.y)) * math.sqrt((b.x * b.x) + (b.y * b.y)))
-    angle := (a.x * b.x + a.y * b.y) / bottom_part
-    // TODO: handle NaN, better clamp it to zero
-    angle = math.to_degrees(math.acos(angle))
-    if bottom_part == 0 {
-      angle = 0.0
-    } 
+    // angle := rl.Vector2DotProduct(a, b)
+    angle: f32
+    bottom_part   : f32
+    top_part      : f32
+    initial_angle : f32
+    angle_acos    : f32
 
-    // TODO: remove. this is unsafe.
-    str := rl.TextFormat("dot = %f", angle)
-    if libc.strcmp(str, "dot = NaN") == 0 {
-      fmt.println("hmmmm")
+    if !rl.Vector2Equals(a, b) {
+      bottom_part   = (math.sqrt((a.x * a.x) + (a.y * a.y)) * math.sqrt((b.x * b.x) + (b.y * b.y)))
+      top_part      = (a.x * b.x + a.y * b.y)
+      initial_angle = top_part / bottom_part
+      angle_acos = math.acos(initial_angle)
+      angle = math.to_degrees(angle_acos)
+    }
+    else {
+      angle = 0.0
     }
     
     rl.DrawText(str, auto_cast enemy.x - 100, auto_cast enemy.y - 100, 20, rl.BLACK)
