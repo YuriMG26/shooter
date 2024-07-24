@@ -20,6 +20,13 @@ dash_duration       :: 0.1
 default_enemy_size  :: 150
 default_bullet_size :: 8
 
+EnemyState :: enum
+{
+  Patrol,
+  Alert,
+  Attacking
+}
+
 GunType :: enum
 {
   SemiAuto,
@@ -68,6 +75,8 @@ Bullet :: struct
 
 Enemy :: struct
 {
+  state          : EnemyState,
+  player_detect  : bool,
   x, y           : f32,
   starting_health: f32,
   rotation       : f32,
@@ -166,6 +175,10 @@ GameMemory :: struct
 }
 
 g_mem: ^GameMemory
+
+look_at :: #force_inline proc(a, b: Point) -> f32 {
+  return math.to_degrees(math.atan2(a.x - b.x, b.y - a.y))
+}
 
 player_drop_gun :: proc()
 {
@@ -294,6 +307,7 @@ spawn_enemy :: proc(x, y, health, speed: f32)
 {
   using g_mem
   enemy_to_spawn := Enemy {
+    state = EnemyState.Patrol,
     x = x, y = y, health = health, speed = speed,
     starting_health = health, starting_speed = speed,
     rotation = rand.float32_range(0, 360),
@@ -310,9 +324,22 @@ simulate_enemy :: #force_inline proc(enemy: ^Enemy, index: int)
   enemy.direction = rl.Vector2{0, 1}
   enemy.direction = rl.Vector2Rotate(enemy.direction, math.to_radians(enemy.rotation))
 
-  // direction := rl.Vector2Normalize(rl.Vector2{player_pos.x - enemy.x, player_pos.y - enemy.y})
-  // enemy.x += direction.x * delta_time * enemy.speed
-  // enemy.y += direction.y * delta_time * enemy.speed
+  switch(enemy.state)
+  {
+    case .Patrol: {
+      if enemy.player_detect do enemy.state = .Alert 
+    } 
+    case .Alert: {
+      enemy.rotation = look_at({enemy.x, enemy.y}, player_pos) 
+      direction := rl.Vector2Normalize(rl.Vector2{player_pos.x - enemy.x, player_pos.y - enemy.y})
+      enemy.x += direction.x * delta_time * enemy.speed
+      enemy.y += direction.y * delta_time * enemy.speed
+    }
+    case .Attacking: {
+
+    }
+  }
+
 }
 
 simulate_enemies :: proc()
@@ -328,7 +355,7 @@ draw_enemies :: proc()
   using g_mem
   default_color :: rl.YELLOW
   enemy_max_health :: 100
-  for enemy, index in enemies {
+  for &enemy, index in enemies {
     // TODO: rotation is being calculated here but should be doing this in simulate_enemies()
     // rotation := math.to_degrees(math.atan2(enemy.x - player_pos.x, player_pos.y - enemy.y))
     color := default_color
@@ -351,10 +378,10 @@ draw_enemies :: proc()
     a := enemy.direction
     b := to_player_vector_normalized
     angle := (a.x * b.x + a.y * b.y) / (math.sqrt((a.x * a.x) + (a.y * a.y)) * math.sqrt((b.x * b.x) + (b.y * b.y)))
+    // TODO: handle NaN, better clamp it to zero
     angle = math.to_degrees(math.acos(angle))
 
     rl.DrawText(rl.TextFormat("dot = %f", angle), auto_cast enemy.x - 100, auto_cast enemy.y - 100, 20, rl.BLACK)
-
 
     if angle < fov / 2 && rl.Vector2Distance({enemy.x, enemy.y}, player_new_pos) < 1500 {
       
@@ -373,8 +400,11 @@ draw_enemies :: proc()
           }
         }
       }
-      if collided_with_wall == false do line_color = rl.GREEN
-    }
+      if collided_with_wall == false {
+        line_color = rl.GREEN
+        enemy.player_detect = true
+      } 
+    } else do enemy.player_detect = false
 
     rl.DrawLineV({enemy.x, enemy.y}, {enemy.x + left_line.x * line_size, enemy.y + left_line.y * line_size}, line_color)
     rl.DrawLineV({enemy.x, enemy.y}, {enemy.x + right_line.x * line_size, enemy.y + right_line.y * line_size}, line_color)
