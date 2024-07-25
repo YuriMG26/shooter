@@ -152,7 +152,7 @@ GameMemory :: struct
   screen_width               : f32,
   screen_height              : f32,
   game_camera                : rl.Camera2D,
-  mouse_position_world             : rl.Vector2,
+  mouse_position_world       : rl.Vector2,
   // camera
   camera_state               : int,
   target_zoom                : f32,
@@ -764,15 +764,11 @@ update_and_render :: proc() -> bool
 
   simulate_walls()
 
-  // rl.DrawTextureEx(background, rl.Vector2{-1000, -1000}, 0, 4, rl.WHITE)
-
   draw_dropped_guns()
-  
-  // rl.DrawLineV(rl.Vector2{ player_pos.x, player_pos.y }, mouse_position_world, rl.RED)
 
   rl.DrawRectanglePro(rl.Rectangle{ player_pos.x, player_pos.y, player_size.x, player_size.y }, rl.Vector2{ player_size.x / 2, player_size.y / 2 }, player_rotation, rl.RED)
-  // drawing cooldown bar
 
+  // drawing cooldown bar
   cooldown_bar_height := f32(dash_cooldown / 3.0) * 60
   rl.DrawRectanglePro(rectangle_from_points({player_pos.x - player_default_size - 12, player_pos.y + 40 - cooldown_bar_height}, {player_pos.x - player_default_size, player_pos.y + 40}), rl.Vector2(0), 0, rl.RED)
   
