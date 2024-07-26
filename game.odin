@@ -359,6 +359,7 @@ simulate_enemy :: #force_inline proc(enemy: ^Enemy, index: int)
     // TODO: figure out how to avoid code duplication here, this is looking very ugly.
     case .Attack: {
       if distance < enemy_range_distance do enemy.state = .GetRange
+      else do enemy.state = .Shooting
     }
     case .GetRange: {
       direction := rl.Vector2Normalize(rl.Vector2{player_pos.x - enemy.position.x, player_pos.y - enemy.position.y})
@@ -367,7 +368,7 @@ simulate_enemy :: #force_inline proc(enemy: ^Enemy, index: int)
       enemy.position += direction * delta_time * enemy.speed * 10
       distance := rl.Vector2Distance(rl.Vector2{enemy.position.x, enemy.position.y}, player_pos)
       if distance > enemy_range_distance do enemy.transition_timer += rl.GetFrameTime()
-      if enemy.transition_timer > 0.2 {
+      if enemy.transition_timer > 0.6 {
         enemy.state = .Shooting
         enemy.transition_timer = 0.0
       }
