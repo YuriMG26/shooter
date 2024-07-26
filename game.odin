@@ -331,7 +331,7 @@ simulate_enemy :: #force_inline proc(enemy: ^Enemy, index: int)
   enemy.direction = rl.Vector2{0, 1}
   enemy.direction = rl.Vector2Rotate(enemy.direction, math.to_radians(enemy.rotation))
 
-  // enemy.rotation = math.lerp(enemy.rotation, enemy.target_rotation, f32(0.1))
+  enemy.rotation = math.lerp(enemy.rotation, enemy.target_rotation, f32(0.1))
 
   enemy_range_distance :: 550
 
@@ -342,7 +342,7 @@ simulate_enemy :: #force_inline proc(enemy: ^Enemy, index: int)
       if enemy.player_detect do enemy.state = .Attack 
     } 
     case .Alert: {
-      enemy.rotation = look_at({enemy.position.x, enemy.position.y}, player_pos) 
+      enemy.target_rotation = look_at({enemy.position.x, enemy.position.y}, player_pos) 
       direction := rl.Vector2Normalize(rl.Vector2{player_pos.x - enemy.position.x, player_pos.y - enemy.position.y})
       enemy.position.x += direction.x * delta_time * enemy.speed
       enemy.position.y += direction.y * delta_time * enemy.speed
@@ -354,7 +354,7 @@ simulate_enemy :: #force_inline proc(enemy: ^Enemy, index: int)
     case .GetRange: {
       direction := rl.Vector2Normalize(rl.Vector2{player_pos.x - enemy.position.x, player_pos.y - enemy.position.y})
       direction = -direction
-      enemy.rotation = look_at(enemy.position, enemy.position + direction)
+      enemy.target_rotation = look_at(enemy.position, enemy.position + direction)
       enemy.position += direction * delta_time * enemy.speed * 10
       distance := rl.Vector2Distance(rl.Vector2{enemy.position.x, enemy.position.y}, player_pos)
       if distance > enemy_range_distance do enemy.transition_timer += rl.GetFrameTime()
@@ -365,7 +365,7 @@ simulate_enemy :: #force_inline proc(enemy: ^Enemy, index: int)
     }
     case .Shooting: {
       direction := rl.Vector2Normalize(rl.Vector2{player_pos.x - enemy.position.x, player_pos.y - enemy.position.y})
-      enemy.rotation = look_at(enemy.position, player_pos)
+      enemy.target_rotation = look_at(enemy.position, player_pos)
       if distance < enemy_range_distance do enemy.state = .GetRange
     }
   }
