@@ -26,7 +26,9 @@ EnemyState :: enum
 {
   Patrol,
   Alert,
-  Attacking
+  Attack,
+  GetRange,
+  Shooting,
 }
 
 GunType :: enum
@@ -75,17 +77,20 @@ Bullet :: struct
   type        : f64,
 }
 
+// TODO: check struct alignment
 Enemy :: struct
 {
-  state          : EnemyState,
-  player_detect  : bool,
-  x, y           : f32,
-  starting_health: f32,
-  rotation       : f32,
-  health         : f32,
-  speed          : f32,
-  starting_speed : f32,
-  direction      : rl.Vector2,
+  state            : EnemyState,
+  player_detect    : bool,
+  transition_timer : f32,
+  position         : [2]f32,
+  starting_health  : f32,
+  rotation         : f32,
+  target_rotation  : f32,
+  health           : f32,
+  speed            : f32,
+  starting_speed   : f32,
+  direction        : rl.Vector2,
 }
 
 Arguments :: struct
@@ -299,9 +304,9 @@ init_default_walls :: proc()
 spawn_enemy_random :: proc()
 {
   using g_mem
-  x := rand.float32_range(0, screen_width)
-  y := rand.float32_range(0, screen_height)
-  speed := rand.float32_range(0, 200)
+  x := rand.float32_range(-2500, 2500)
+  y := rand.float32_range(-2500, 2500)
+  speed := rand.float32_range(100, 200)
   spawn_enemy(x, y, 100, speed)
 }
 
@@ -310,7 +315,7 @@ spawn_enemy :: proc(x, y, health, speed: f32)
   using g_mem
   enemy_to_spawn := Enemy {
     state = EnemyState.Patrol,
-    x = x, y = y, health = health, speed = speed,
+    position = {x, y}, health = health, speed = speed,
     starting_health = health, starting_speed = speed,
     rotation = rand.float32_range(0, 360),
   }
@@ -326,22 +331,44 @@ simulate_enemy :: #force_inline proc(enemy: ^Enemy, index: int)
   enemy.direction = rl.Vector2{0, 1}
   enemy.direction = rl.Vector2Rotate(enemy.direction, math.to_radians(enemy.rotation))
 
+  // enemy.rotation = math.lerp(enemy.rotation, enemy.target_rotation, f32(0.1))
+
+  enemy_range_distance :: 550
+
+  distance := rl.Vector2Distance(rl.Vector2{enemy.position.x, enemy.position.y}, player_pos)
   switch(enemy.state)
   {
     case .Patrol: {
-      if enemy.player_detect do enemy.state = .Alert 
+      if enemy.player_detect do enemy.state = .Attack 
     } 
     case .Alert: {
-      enemy.rotation = look_at({enemy.x, enemy.y}, player_pos) 
-      direction := rl.Vector2Normalize(rl.Vector2{player_pos.x - enemy.x, player_pos.y - enemy.y})
-      enemy.x += direction.x * delta_time * enemy.speed
-      enemy.y += direction.y * delta_time * enemy.speed
+      enemy.rotation = look_at({enemy.position.x, enemy.position.y}, player_pos) 
+      direction := rl.Vector2Normalize(rl.Vector2{player_pos.x - enemy.position.x, player_pos.y - enemy.position.y})
+      enemy.position.x += direction.x * delta_time * enemy.speed
+      enemy.position.y += direction.y * delta_time * enemy.speed
     }
-    case .Attacking: {
-
+    // TODO: figure out how to avoid code duplication here, this is looking very ugly.
+    case .Attack: {
+      if distance < enemy_range_distance do enemy.state = .GetRange
+    }
+    case .GetRange: {
+      direction := rl.Vector2Normalize(rl.Vector2{player_pos.x - enemy.position.x, player_pos.y - enemy.position.y})
+      direction = -direction
+      enemy.rotation = look_at(enemy.position, enemy.position + direction)
+      enemy.position += direction * delta_time * enemy.speed * 10
+      distance := rl.Vector2Distance(rl.Vector2{enemy.position.x, enemy.position.y}, player_pos)
+      if distance > enemy_range_distance do enemy.transition_timer += rl.GetFrameTime()
+      if enemy.transition_timer > 0.2 {
+        enemy.state = .Shooting
+        enemy.transition_timer = 0.0
+      }
+    }
+    case .Shooting: {
+      direction := rl.Vector2Normalize(rl.Vector2{player_pos.x - enemy.position.x, player_pos.y - enemy.position.y})
+      enemy.rotation = look_at(enemy.position, player_pos)
+      if distance < enemy_range_distance do enemy.state = .GetRange
     }
   }
-
 }
 
 simulate_enemies :: proc()
@@ -359,21 +386,21 @@ draw_enemies :: proc()
   enemy_max_health :: 100
   for &enemy, index in enemies {
     // TODO: rotation is being calculated here but should be doing this in simulate_enemies()
-    // rotation := math.to_degrees(math.atan2(enemy.x - player_pos.x, player_pos.y - enemy.y))
+    // rotation := math.to_degrees(math.atan2(enemy.position.x - player_pos.x, player_pos.y - enemy.position.y))
     color := default_color
     health_factor := enemy.health / enemy_max_health
     color.g = u8(255 * health_factor)
-    rl.DrawRectanglePro(rl.Rectangle{enemy.x, enemy.y, default_enemy_size, default_enemy_size}, rl.Vector2{default_enemy_size / 2, default_enemy_size / 2}, enemy.rotation, color)
+    rl.DrawRectanglePro(rl.Rectangle{enemy.position.x, enemy.position.y, default_enemy_size, default_enemy_size}, rl.Vector2{default_enemy_size / 2, default_enemy_size / 2}, enemy.rotation, color)
 
     fov :: 90
     line_size :: 1000
     left_line := rl.Vector2Rotate(enemy.direction, math.to_radians(f32(-fov/2)))
     right_line := rl.Vector2Rotate(enemy.direction, math.to_radians(f32(fov/2)))
-    // rl.DrawLineV({enemy.x, enemy.y}, {enemy.x + enemy.direction.x * 50, enemy.y + enemy.direction.y * 50}, rl.RED)
+    // rl.DrawLineV({enemy.position.x, enemy.position.y}, {enemy.position.x + enemy.direction.x * 50, enemy.position.y + enemy.direction.y * 50}, rl.RED)
 
     line_color := rl.RED
     
-    to_player_vector_not_normalized := player_pos - rl.Vector2{enemy.x, enemy.y}
+    to_player_vector_not_normalized := player_pos - rl.Vector2{enemy.position.x, enemy.position.y}
     to_player_vector_normalized := rl.Vector2Normalize(to_player_vector_not_normalized)
 
     dot := rl.Vector2DotProduct(enemy.direction, to_player_vector_normalized)
@@ -398,18 +425,18 @@ draw_enemies :: proc()
       angle = 0.0
     }
     
-    rl.DrawText(str, auto_cast enemy.x - 100, auto_cast enemy.y - 100, 20, rl.BLACK)
+    // rl.DrawText(str, auto_cast enemy.position.x - 100, auto_cast enemy.position.y - 100, 20, rl.BLACK)
 
-    if angle < fov / 2 && rl.Vector2Distance({enemy.x, enemy.y}, player_new_pos) < 1500 {
+    if angle < fov / 2 && rl.Vector2Distance({enemy.position.x, enemy.position.y}, player_new_pos) < 1500 {
       
       // TODO: speed
-      current_y: i32 = auto_cast enemy.y - 100
+      current_y: i32 = auto_cast enemy.position.y - 100
       collided_with_wall := false
       for wall, windex in walls {
         // raycast
-        collide, tmin, tmax := intersect_ray_rec({enemy.x, enemy.y}, to_player_vector_normalized, wall)
+        collide, tmin, tmax := intersect_ray_rec({enemy.position.x, enemy.position.y}, to_player_vector_normalized, wall)
         if collide {
-          rl.DrawText(rl.TextFormat("collision = %d", windex), auto_cast enemy.x, current_y, 20, rl.BLACK)
+          rl.DrawText(rl.TextFormat("collision = %d", windex), auto_cast enemy.position.x, current_y, 20, rl.BLACK)
           current_y += 22
           if tmin < rl.Vector2Length(to_player_vector_not_normalized) {
             collided_with_wall = true
@@ -423,8 +450,30 @@ draw_enemies :: proc()
       } 
     } else do enemy.player_detect = false
 
-    rl.DrawLineV({enemy.x, enemy.y}, {enemy.x + left_line.x * line_size, enemy.y + left_line.y * line_size}, line_color)
-    rl.DrawLineV({enemy.x, enemy.y}, {enemy.x + right_line.x * line_size, enemy.y + right_line.y * line_size}, line_color)
+    rl.DrawLineV({enemy.position.x, enemy.position.y}, {enemy.position.x + left_line.x * line_size, enemy.position.y + left_line.y * line_size}, line_color)
+    rl.DrawLineV({enemy.position.x, enemy.position.y}, {enemy.position.x + right_line.x * line_size, enemy.position.y + right_line.y * line_size}, line_color)
+
+    str: cstring
+    switch(enemy.state)
+    {
+      case .Patrol: {
+        str = rl.TextFormat("Patrol")
+      } 
+      case .Alert: {
+        str = rl.TextFormat("Alert")
+      }
+      case .Attack: {
+        str = rl.TextFormat("Attack")
+      }
+      case .GetRange: {
+        str = rl.TextFormat("GetRange")
+      }
+      case .Shooting: {
+        str = rl.TextFormat("Shooting")
+      }
+    }
+    rl.DrawText(str, auto_cast enemy.position.x - 100, auto_cast enemy.position.y - 50, 30, rl.BLACK)
+    rl.DrawText(rl.TextFormat("%f", rl.Vector2Distance(enemy.position, player_pos)), auto_cast enemy.position.x - 100, auto_cast enemy.position.y - 100, 30, rl.BLACK)
   }
 }
 
@@ -546,11 +595,11 @@ simulate_walls :: proc()
       }
     }
     for &enemy in enemies {
-      collide, normal, depth := intersect_circle_rec({enemy.x, enemy.y}, default_enemy_size / 2.0, wall)
+      collide, normal, depth := intersect_circle_rec({enemy.position.x, enemy.position.y}, default_enemy_size / 2.0, wall)
       if collide {
         v := - normal * depth
-        enemy.x += v.x
-        enemy.y += v.y
+        enemy.position.x += v.x
+        enemy.position.y += v.y
       }
     }
   }
@@ -667,7 +716,7 @@ check_collision :: proc()
   for &bullet, bullet_index in bullets {
     bullet_removed := false
     for &enemy, enemy_index in enemies {
-      if rl.CheckCollisionCircles(rl.Vector2{bullet.x, bullet.y}, default_bullet_size / 2, rl.Vector2{enemy.x, enemy.y}, default_enemy_size / 2) {
+      if rl.CheckCollisionCircles(rl.Vector2{bullet.x, bullet.y}, default_bullet_size / 2, rl.Vector2{enemy.position.x, enemy.position.y}, default_enemy_size / 2) {
         fmt.printfln("Bullet %d collided with enemy %d", bullet_index, enemy_index)
         bullet_removed = true
         unordered_remove(&bullets, bullet_index)
