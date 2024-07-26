@@ -59,6 +59,11 @@ GunTable := map[string]Gun {
   "SPAS-12"   = Gun { bullets_per_shot = 4, type = .Shotgun,    rpm = 200, bullet_speed = 5000, name = "SPAS-12", mag_capacity = 6, bullets_in_mag = 6, bullet_damage = 5, spread = 15,  }, // SPAS-12
 }
 
+// TODO: this is not the better way of doing this, I think. Too much indirection to get the data from the table.
+GunNamesTable := []string{
+  "M1911", "AK-47", "SPAS-12" 
+}
+
 DroppedGun :: struct
 {
   position: [2]f32,
@@ -91,6 +96,7 @@ Enemy :: struct
   speed            : f32,
   starting_speed   : f32,
   direction        : rl.Vector2,
+  gun              : Gun,
 }
 
 Arguments :: struct
@@ -307,13 +313,16 @@ spawn_enemy_random :: proc()
   x := rand.float32_range(-2500, 2500)
   y := rand.float32_range(-2500, 2500)
   speed := rand.float32_range(100, 200)
-  spawn_enemy(x, y, 100, speed)
+  gun_id := rand.float32_range(0, 3)
+  gun := GunTable[GunNamesTable[int(gun_id)]]
+  spawn_enemy(x, y, 100, speed, gun)
 }
 
-spawn_enemy :: proc(x, y, health, speed: f32)
+spawn_enemy :: proc(x, y, health, speed: f32, gun: Gun)
 {
   using g_mem
   enemy_to_spawn := Enemy {
+    gun = gun,
     state = EnemyState.Patrol,
     position = {x, y}, health = health, speed = speed,
     starting_health = health, starting_speed = speed,
@@ -333,7 +342,7 @@ simulate_enemy :: #force_inline proc(enemy: ^Enemy, index: int)
 
   enemy.rotation = math.lerp(enemy.rotation, enemy.target_rotation, f32(0.1))
 
-  enemy_range_distance :: 550
+  enemy_range_distance :: 1000
 
   distance := rl.Vector2Distance(rl.Vector2{enemy.position.x, enemy.position.y}, player_pos)
   switch(enemy.state)
@@ -366,6 +375,7 @@ simulate_enemy :: #force_inline proc(enemy: ^Enemy, index: int)
     case .Shooting: {
       direction := rl.Vector2Normalize(rl.Vector2{player_pos.x - enemy.position.x, player_pos.y - enemy.position.y})
       enemy.target_rotation = look_at(enemy.position, player_pos)
+      simulate_enemy_gun(enemy, direction)
       if distance < enemy_range_distance do enemy.state = .GetRange
     }
   }
@@ -473,7 +483,8 @@ draw_enemies :: proc()
       }
     }
     rl.DrawText(str, auto_cast enemy.position.x - 100, auto_cast enemy.position.y - 50, 30, rl.BLACK)
-    rl.DrawText(rl.TextFormat("%f", rl.Vector2Distance(enemy.position, player_pos)), auto_cast enemy.position.x - 100, auto_cast enemy.position.y - 100, 30, rl.BLACK)
+    // rl.DrawText(rl.TextFormat("%f", rl.Vector2Distance(enemy.position, player_pos)), auto_cast enemy.position.x - 100, auto_cast enemy.position.y - 100, 30, rl.BLACK)
+    rl.DrawText(rl.TextFormat("%s", enemy.gun.name), auto_cast enemy.position.x - 100, auto_cast enemy.position.y - 100, 60, rl.BLACK)
   }
 }
 
@@ -617,6 +628,34 @@ draw_dropped_guns :: proc()
   }
 }
 
+// FIX: code duplication
+simulate_enemy_gun :: proc(enemy: ^Enemy, shoot_direction: rl.Vector2)
+{
+  gun := &enemy.gun
+  inv_rpm := f64(60.0) / f64(gun.rpm)
+
+  // TODO: add triggers for "shooting activations" so that semi-auto and full-auto behave differently.
+  // And visualizations for this triggers should be cool too, I guess.
+  if gun.bullets_in_mag == 0 do return
+
+  // TODO: need to handle burst mechanics
+  if rl.GetTime() > gun.next_shoot_time {
+    for i in 0..<gun.bullets_per_shot {
+      position_point := rl.Vector2{
+        enemy.position.x + (shoot_direction.x * ((default_enemy_size / 2) + 15)),
+        enemy.position.y + (shoot_direction.y * ((default_enemy_size / 2) + 15))
+      }
+      rotation := rand.float32_range(auto_cast -gun.spread, auto_cast gun.spread)
+      direction := rl.Vector2Rotate(shoot_direction, math.to_radians(f32(rotation)))
+      spawn_bullet(position_point.x, position_point.y, enemy.rotation, direction, gun.bullet_speed)
+    }
+    gun.next_shoot_time = rl.GetTime() + inv_rpm
+    gun.bullets_in_mag -= 1
+  }
+}
+
+// TODO: unificate this on a generic shoot function so that the player and enemy behavior of shooting
+// share the same code.
 simulate_player_gun :: proc(mouse_direction: [2]f32)
 {
   using g_mem
