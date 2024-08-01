@@ -137,6 +137,9 @@ GameFonts :: struct
   inconsolata: [GameFontSizes.TotalSizes]rl.Font
 }
 
+PATHING_ROWS :: 100
+PATHING_COLS :: 100
+
 GameMemory :: struct
 {
 // TODO Default Values
@@ -180,6 +183,10 @@ GameMemory :: struct
   cursor_texture             : rl.Texture2D,
 
   game_fonts                 : GameFonts,
+
+  enemies_shooting           : int,
+
+  world_grid_pathing         : [PATHING_ROWS][PATHING_COLS]int,
 
   walls                      : [dynamic]rl.Rectangle,
   bullets                    : [dynamic]Bullet,
@@ -359,7 +366,10 @@ simulate_enemy :: #force_inline proc(enemy: ^Enemy, index: int)
     // TODO: figure out how to avoid code duplication here, this is looking very ugly.
     case .Attack: {
       if distance < enemy_range_distance do enemy.state = .GetRange
-      else do enemy.state = .Shooting
+      else {
+        enemy.state = .Shooting
+        enemies_shooting += 1
+      }
     }
     case .GetRange: {
       direction := rl.Vector2Normalize(rl.Vector2{player_pos.x - enemy.position.x, player_pos.y - enemy.position.y})
@@ -370,6 +380,7 @@ simulate_enemy :: #force_inline proc(enemy: ^Enemy, index: int)
       if distance > enemy_range_distance do enemy.transition_timer += rl.GetFrameTime()
       if enemy.transition_timer > 0.6 {
         enemy.state = .Shooting
+        enemies_shooting += 1
         enemy.transition_timer = 0.0
       }
     }
@@ -377,7 +388,10 @@ simulate_enemy :: #force_inline proc(enemy: ^Enemy, index: int)
       direction := rl.Vector2Normalize(rl.Vector2{player_pos.x - enemy.position.x, player_pos.y - enemy.position.y})
       enemy.target_rotation = look_at(enemy.position, player_pos)
       simulate_enemy_gun(enemy, direction)
-      if distance < enemy_range_distance do enemy.state = .GetRange
+      if distance < enemy_range_distance {
+        enemy.state = .GetRange
+        enemies_shooting -= 1
+      }
     }
   }
 }
@@ -629,6 +643,30 @@ draw_dropped_guns :: proc()
   }
 }
 
+draw_pathing_grid :: proc()
+{
+  using g_mem
+  row_world_size :: 64 * 2
+  col_world_size :: 64 * 2
+
+  initial_x :: -(PATHING_COLS / 2) * col_world_size
+  initial_y :: -(PATHING_ROWS / 2) * row_world_size
+  current_x := int(initial_x)
+  current_y := int(initial_y)
+
+
+  for i in 0..<PATHING_ROWS {
+    for j in 0..<PATHING_COLS {
+      color := rl.WHITE
+      if world_grid_pathing[i][j] == 1 do color = rl.Color{0, 0, 0, 0}
+      rl.DrawRectanglePro({auto_cast current_x, auto_cast current_y, 20, 20}, {10, 10}, 0.0, color)
+      current_x += col_world_size 
+    }
+    current_x = initial_x
+    current_y += row_world_size // todo: check this
+  }
+}
+
 // FIX: code duplication
 simulate_enemy_gun :: proc(enemy: ^Enemy, shoot_direction: rl.Vector2)
 {
@@ -855,6 +893,8 @@ update_and_render :: proc() -> bool
 
   draw_dropped_guns()
 
+  draw_pathing_grid()
+
   rl.DrawRectanglePro(rl.Rectangle{ player_pos.x, player_pos.y, player_size.x, player_size.y }, rl.Vector2{ player_size.x / 2, player_size.y / 2 }, player_rotation, rl.RED)
 
   // drawing cooldown bar
@@ -872,6 +912,8 @@ update_and_render :: proc() -> bool
   rl.DrawCircle(auto_cast player_collider.x, auto_cast player_collider.y, player_collider.radius, rl.Color{50, 255, 50, 180})
 
   rl.DrawRectangleV(closest_point, rl.Vector2{30, 30}, rl.GREEN)
+
+  rl.DrawRectangle(0, 0, 25, 25, rl.PINK)
 
   rl.EndMode2D()
 
@@ -935,8 +977,9 @@ update_and_render :: proc() -> bool
   draw_shadowed_text(rl.TextFormat("Current Time: %f", rl.GetTime()), 10, current_y, 20, rl.LIGHTGRAY)
   current_y += 22
 
-  draw_shadowed_text(rl.TextFormat("Colliding wall: %d", player_colliding_wall), 10, current_y, 20, rl.LIGHTGRAY)
+  draw_shadowed_text(rl.TextFormat("Enemies shooting: %d", enemies_shooting), 10, current_y, 20, rl.LIGHTGRAY)
   current_y += 22
+
 
 
   screen_mouse_position_world := rl.GetMousePosition()
